@@ -72,6 +72,7 @@
       this.candles = [];
       this.indSeries = new Map();
       this.indLines = new Map();   // key -> [{time,value}] merged history
+      this.overlays = new Map();   // type -> chart primitive (volume profile, FVG)
       this.decimals = 2;
       this.reqToken = 0;
       this.build();
@@ -278,6 +279,7 @@
         this.series.setData(this.chartData());
         this.indLines = new Map((res.indicators || []).map((l) => [l.key, l]));
         this.drawIndicators();
+        this.drawOverlays(res.overlays || []);
         this.chart.timeScale().fitContent();
 
         this.lastBar = Object.assign({}, candles[candles.length - 1]);
@@ -381,6 +383,7 @@
         this.series.setData(this.chartData());
         this.mergeIndicators(res.indicators || [], full);
         this.drawIndicators();
+        this.drawOverlays(res.overlays || []);
         const last = this.candles[this.candles.length - 1];
         this.lastBar = Object.assign({}, last);
         this.refPrice = this.computeReference(this.candles);
@@ -481,6 +484,7 @@
       /* one pane per band indicator, in the order they were added */
       const bandGroups = [];
       for (const line of wanted.values()) {
+        if (line.pane === 'overlay') continue;
         if (line.pane === 'sub' && bandGroups.indexOf(line.group) === -1) {
           bandGroups.push(line.group);
         }
@@ -573,6 +577,40 @@
       this.btnInd.classList.toggle('on', this.config.indicators.length > 0);
     }
 
+    /* Volume Profile and FVG are painted by chart primitives rather than
+     * series, because one is a histogram across price and the other is a set
+     * of rectangles. They always attach to the candlestick series in pane 0. */
+    drawOverlays(list) {
+      if (!Overlays.supported || !this.series) return;
+      const seen = new Set();
+
+      list.forEach((payload) => {
+        if (!payload || !payload.type) return;
+        seen.add(payload.type);
+        let prim = this.overlays.get(payload.type);
+        if (!prim) {
+          prim = Overlays.create(payload.type);
+          if (!prim) return;
+          try { this.series.attachPrimitive(prim); } catch (_) { return; }
+          this.overlays.set(payload.type, prim);
+        }
+        prim.setData(payload, this.tzShift);
+      });
+
+      // keep the gap boxes clear of the volume profile when both are on
+      const fvgPrim = this.overlays.get('fvg');
+      if (fvgPrim) {
+        fvgPrim.reserveRight = this.overlays.has('volume_profile')
+          ? Math.min(this.chartEl.clientWidth * 0.22, 130) + 6 : 0;
+      }
+
+      for (const [type, prim] of this.overlays) {
+        if (seen.has(type)) continue;
+        try { this.series.detachPrimitive(prim); } catch (_) {}
+        this.overlays.delete(type);
+      }
+    }
+
     setIndicators(list) {
       this.config.indicators = Indicators.clean(list);
       this.ctx.onChange(this.index, this.config);
@@ -644,7 +682,7 @@
           const renderChips = (q) => {
             groups.innerHTML = '';
             const needle = (q || '').trim().toLowerCase();
-            [['price', 'On the chart'], ['sub', 'In a band below']].forEach(([kind, heading]) => {
+            [['price', 'On the chart'], ['overlay', 'Drawn over the chart'], ['sub', 'In a band below']].forEach(([kind, heading]) => {
               const matches = Indicators.menuCatalog().filter((c) =>
                 c.pane === kind &&
                 (!needle || c.label.toLowerCase().includes(needle) || c.id.includes(needle)));
@@ -793,6 +831,10 @@
       clearTimeout(this._flashTimer);
       if (this.offAlerts) this.offAlerts();
       if (this.observer) this.observer.disconnect();
+      this.overlays.forEach((prim) => {
+        try { this.series.detachPrimitive(prim); } catch (_) {}
+      });
+      this.overlays.clear();
       if (this.chart) { try { this.chart.remove(); } catch (_) {} this.chart = null; }
       this.indSeries.clear();
       if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);

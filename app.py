@@ -76,7 +76,7 @@ def api_candles():
     spec = request.args.get("indicators", "")
 
     candles = src.candles(symbol, timeframe, limit)
-    lines = []
+    lines, overlays = [], []
     if spec:
         # Indicators are computed over the FULL history the source can give us,
         # not just the slice being returned. A 200-period SMA needs 200 bars
@@ -84,6 +84,9 @@ def api_candles():
         # deep window and trim each series to match.
         deep = src.candles(symbol, timeframe, max(limit, 1200))
         lines = ind.compute(deep, spec, tail=len(candles))
+        # Volume Profile and FVG describe the whole window, not the last bar,
+        # so they are always computed over the deep history and sent whole.
+        overlays = ind.compute_overlays(deep, spec)
 
     return jsonify({
         "source": src.key,
@@ -92,6 +95,7 @@ def api_candles():
         "tzOffsetMin": src.display_tz_offset_min,
         "candles": candles,
         "indicators": lines,
+        "overlays": overlays,
     })
 
 
@@ -103,7 +107,7 @@ def api_indicators():
     Returns everything pandas-ta offers that actually works, each flagged
     `curated` or not. The fx menu shows the user's chosen subset; Settings
     lets them pick from the whole list."""
-    return jsonify({"indicators": ind.full_catalog()})
+    return jsonify({"indicators": ind.full_catalog() + ind.overlay_catalog()})
 
 
 @app.get("/api/quotes")

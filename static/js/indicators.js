@@ -90,6 +90,11 @@
       return !!s && s.pane === 'sub';
     },
 
+    isOverlay(id) {
+      const s = this.byId[id];
+      return !!s && s.pane === 'overlay';
+    },
+
     /* Bands stack vertically, so more than a few makes each unreadable in a
      * small grid pane. Overlays have no such limit. */
     MAX_BANDS: 3,

@@ -92,15 +92,27 @@ Two consequences of computing on the server worth knowing:
   panes at the 4s Zerodha rate come to about 2.2 GB/month, at 15s about 0.6 GB,
   against Render's 5 GB allowance.
 
-### Not included: Volume Profile and FVG
+### Volume Profile and Fair Value Gaps
 
-Neither is a line over time, so neither fits the current drawing code.
-`pandas-ta` does provide Volume Profile (`vp`), but it returns a table of price
-bins and volumes that has to be drawn as a horizontal histogram. Fair Value Gaps
-are not in any library — the rule is simple (a three-bar imbalance) but the
-result is a set of rectangles. Both need a canvas overlay positioned with the
-chart's `priceToCoordinate`, which is a separate piece of work from the
-indicator catalog.
+Neither is a line over time — one is a histogram across *price*, the other a set
+of rectangles — so neither can be a chart series. They are painted with
+lightweight-charts v5 **primitives** (`static/js/overlays.js`), which hand you a
+canvas plus `priceToCoordinate` / `timeToCoordinate`. They travel in their own
+`overlays` list on the API response.
+
+**Volume Profile** spreads each candle's volume evenly across its high-low range
+rather than dumping it on the close — a wide bar traded at all of those prices,
+and close-only binning gives a spiky profile that shifts when you change the bin
+count. Volume is conserved exactly. Bars split green/red by whether the candle
+closed up, the **POC** (busiest price) is marked, and the **70% value area** is
+drawn brighter than the rest. Indices have no volume on Yahoo, so nothing draws.
+
+**Fair Value Gaps** are three-bar imbalances: a bullish gap is a bar whose low
+sits above the high from two bars back, leaving prices nobody traded through. A
+gap is marked filled once a later bar trades back into it; filled ones stay on
+the chart but faded, because where price reacted still matters. The default
+minimum size is 0.15% — at 0.05% a ₹1,240 stock produces dozens of 60-paise
+"gaps" that mean nothing. Biggest unfilled gaps are kept first, capped at 14.
 
 ### Alerts
 

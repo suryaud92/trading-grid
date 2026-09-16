@@ -54,7 +54,7 @@
         return;
       }
 
-      [['price', 'Drawn on the chart'], ['sub', 'Drawn in a band below']].forEach(([kind, heading]) => {
+      [['price', 'Drawn on the chart'], ['overlay', 'Drawn over the chart'], ['sub', 'Drawn in a band below']].forEach(([kind, heading]) => {
         const group = matches.filter((s) => s.pane === kind);
         if (!group.length) return;
         const h = document.createElement('div');

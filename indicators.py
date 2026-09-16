@@ -581,3 +581,168 @@ def all_specs():
 
 def full_catalog():
     return [dict(s.describe(), curated=(s in CATALOG)) for s in all_specs()]
+
+
+# ==========================================================================
+# Overlays — things that are not a line over time.
+#
+# Volume Profile is a histogram across PRICE, and a Fair Value Gap is a
+# rectangle. Neither can be a series, so they travel in their own list on the
+# API response and are drawn by chart primitives in static/js/overlays.js.
+# ==========================================================================
+
+def volume_profile(candles, bins=24, value_area=0.70):
+    """Volume by price level, plus the POC and value area.
+
+    Each candle's volume is spread evenly across its high-low range rather than
+    dumped on the close: a wide bar traded across all of those prices, and
+    close-only binning produces a spiky profile that moves about when you
+    change the bin count.
+    """
+    if not candles:
+        return None
+    lo = min(c["low"] for c in candles)
+    hi = max(c["high"] for c in candles)
+    if hi <= lo:
+        return None
+    bins = max(6, min(int(bins), 120))
+    step = (hi - lo) / bins
+
+    up = [0.0] * bins
+    down = [0.0] * bins
+    for c in candles:
+        vol = float(c.get("volume") or 0)
+        if vol <= 0:
+            continue
+        first = max(0, min(bins - 1, int((c["low"] - lo) / step)))
+        last = max(0, min(bins - 1, int((c["high"] - lo) / step)))
+        touched = last - first + 1
+        share = vol / touched
+        bucket = up if c["close"] >= c["open"] else down
+        for b in range(first, last + 1):
+            bucket[b] += share
+
+    totals = [up[i] + down[i] for i in range(bins)]
+    grand = sum(totals)
+    if grand <= 0:
+        return None
+
+    poc = max(range(bins), key=lambda i: totals[i])
+
+    # grow outwards from the POC until 70% of traded volume is enclosed
+    lo_i = hi_i = poc
+    covered = totals[poc]
+    while covered < grand * value_area and (lo_i > 0 or hi_i < bins - 1):
+        below = totals[lo_i - 1] if lo_i > 0 else -1
+        above = totals[hi_i + 1] if hi_i < bins - 1 else -1
+        if above >= below:
+            hi_i += 1
+            covered += totals[hi_i]
+        else:
+            lo_i -= 1
+            covered += totals[lo_i]
+
+    return {
+        "type": "volume_profile",
+        "bins": [
+            {"low": lo + i * step, "high": lo + (i + 1) * step,
+             "up": round(up[i], 2), "down": round(down[i], 2),
+             "total": round(totals[i], 2),
+             "inValueArea": lo_i <= i <= hi_i}
+            for i in range(bins)
+        ],
+        "max": round(max(totals), 2),
+        "poc": lo + (poc + 0.5) * step,
+        "vah": lo + (hi_i + 1) * step,
+        "val": lo + lo_i * step,
+    }
+
+
+def fair_value_gaps(candles, min_pct=0.15, keep=14):
+    """Three-bar imbalances (ICT 'fair value gaps').
+
+    Bullish when a bar's low sits above the high of two bars earlier, leaving
+    a band of prices nobody traded through. A gap is 'filled' once a later bar
+    trades back into it; filled ones are kept but flagged, because where price
+    reacted still matters.
+    """
+    if len(candles) < 3:
+        return None
+    zones = []
+    for i in range(2, len(candles)):
+        a, c = candles[i - 2], candles[i]
+        mid_price = c["close"] or 1
+        if c["low"] > a["high"]:
+            bottom, top, direction = a["high"], c["low"], "bull"
+        elif c["high"] < a["low"]:
+            bottom, top, direction = c["high"], a["low"], "bear"
+        else:
+            continue
+        if (top - bottom) / mid_price * 100 < min_pct:
+            continue                      # too small to mean anything
+
+        filled_time = None
+        for j in range(i + 1, len(candles)):
+            nxt = candles[j]
+            if (direction == "bull" and nxt["low"] <= bottom) or \
+               (direction == "bear" and nxt["high"] >= top):
+                filled_time = nxt["time"]
+                break
+        zones.append({
+            "time": c["time"], "top": top, "bottom": bottom,
+            "dir": direction, "filledTime": filled_time,
+        })
+
+    zones.sort(key=lambda z: (z["filledTime"] is not None,
+                              -(z["top"] - z["bottom"]) / (z["top"] or 1)))
+    return {"type": "fvg", "zones": zones[:keep], "lastTime": candles[-1]["time"]}
+
+
+OVERLAY_SPECS = {
+    "vprofile": {
+        "id": "vprofile", "label": "Volume Profile", "pane": "overlay",
+        "params": [{"name": "bins", "default": 24, "min": 6, "max": 120}],
+        "lines": [{"key": "vprofile", "name": "Volume Profile", "color": "#60a5fa"}],
+        "note": "Volume by price, with POC and 70% value area. Needs volume, "
+                "so indices show nothing.",
+        "fn": lambda candles, *a: volume_profile(candles, a[0] if a else 24),
+    },
+    "fvg": {
+        "id": "fvg", "label": "Fair Value Gaps", "pane": "overlay",
+        "params": [{"name": "min %", "default": 0.15, "min": 0.01, "max": 5}],
+        "lines": [{"key": "fvg", "name": "FVG", "color": "#22c55e"}],
+        "note": "Three-bar imbalances, largest first. Unfilled are outlined, "
+                "filled are faded. Raise min % to see only the big ones.",
+        "fn": lambda candles, *a: fair_value_gaps(candles, a[0] if a else 0.15),
+    },
+}
+
+
+def overlay_catalog():
+    return [{k: v for k, v in spec.items() if k != "fn"} | {"curated": True}
+            for spec in OVERLAY_SPECS.values()]
+
+
+def compute_overlays(candles, spec_text):
+    out = []
+    for chunk in (spec_text or "").split(","):
+        bits = chunk.strip().split(":")
+        name = bits[0].strip().lower()
+        spec = OVERLAY_SPECS.get(name)
+        if not spec or not candles:
+            continue
+        args = []
+        for b in bits[1:]:
+            try:
+                args.append(float(b))
+            except ValueError:
+                pass
+        try:
+            result = spec["fn"](candles, *args)
+        except Exception as err:
+            print(f"[overlays] {name} failed: {type(err).__name__}: {err}")
+            continue
+        if result:
+            result["key"] = ":".join([name] + [_fmt(a) for a in args])
+            out.append(result)
+    return out
