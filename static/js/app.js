@@ -217,7 +217,7 @@
 
       window.addEventListener('resize', () => this.panes.forEach((p) => p.resize()));
       document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) this.panes.forEach((p) => p.refreshHistory());
+        if (!document.hidden) this.panes.forEach((p) => p.refreshHistory(true));
       });
     },
   };

@@ -1,0 +1,57 @@
+# Keeps the Render free instance awake during Indian market hours.
+#
+# Render shuts a free service down after 15 minutes without traffic, and wipes
+# its disk when it does — which drops the saved Zerodha connection. Pinging it
+# every 10 minutes while the market is open keeps it up for the whole session.
+#
+# Deliberately NOT 24/7: Render allows 750 free instance-hours per month and a
+# month is 744 hours, so running round the clock would consume the entire
+# allowance. This window costs roughly 180 hours a month instead.
+#
+# Outside these hours the service is allowed to sleep, which costs nothing —
+# the Kite token expires around 6am IST daily anyway, so you reconnect each
+# morning regardless.
+#
+# Two things to know about GitHub's scheduler:
+#   * runs can be a few minutes late when GitHub is busy — harmless here
+#   * schedules are disabled after 60 days with no repo activity; GitHub
+#     emails you, and any commit (or the Run workflow button) re-enables it
+
+name: Keep awake (market hours)
+
+on:
+  schedule:
+    # Every 10 min, 03:00-10:59 UTC = 08:30-16:29 IST, Monday to Friday.
+    # Cron is always UTC; IST is UTC+5:30.
+    - cron: '*/10 3-10 * * 1-5'
+  workflow_dispatch:        # lets you trigger it by hand from the Actions tab
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-awake
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wake the dashboard
+        env:
+          # Change this if your Render URL changes.
+          APP_URL: https://trading-grid.onrender.com
+        run: |
+          echo "Pinging $APP_URL/api/health"
+          # A cold start takes about a minute, hence the long timeout and retries.
+          code=$(curl -sS -o /tmp/body.txt -w '%{http_code}' \
+                   --max-time 150 --retry 3 --retry-delay 20 --retry-all-errors \
+                   "$APP_URL/api/health" || echo 000)
+          echo "HTTP $code"
+          cat /tmp/body.txt || true
+          echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Health check failed with status $code"
+            exit 1
+          fi

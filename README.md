@@ -167,6 +167,29 @@ On a host with an ephemeral disk (Render free, HF Spaces), `instance/` is wiped
 on redeploy. Set `KITE_API_KEY` and `KITE_API_SECRET` as env vars so only the
 daily access-token step is left.
 
+## Keeping it awake (Render free tier)
+
+Render shuts a free service down after 15 minutes without traffic and wipes its
+disk, which drops the saved Zerodha connection. `.github/workflows/keep-awake.yml`
+pings `/api/health` every 10 minutes during Indian market hours to prevent that.
+
+It is deliberately **not** 24/7: Render allows 750 free instance-hours a month
+and a month is 744 hours, so running round the clock would consume the whole
+allowance and suspend the service. The market-hours window costs about 180 hours
+a month instead. Outside those hours it sleeps, which costs nothing — the Kite
+token expires around 6am IST daily, so you reconnect each morning either way.
+
+Change `APP_URL` in that file if your Render URL changes. GitHub disables
+scheduled workflows after 60 days of repo inactivity; any commit re-enables it.
+
+### Bandwidth
+
+The routine candle refresh asks for ~10 bars and merges them in, rather than
+re-pulling the full 600 every minute. That matters on a free host: the full pull
+was ~65 KB per pane per minute, about 4 GB a month on eight panes, against
+Render's 5 GB allowance. The incremental version is roughly 0.12 GB. A complete
+re-pull still happens when the tab returns to the foreground.
+
 ## Adding another broker
 
 Everything lives in **`data_source.py`**; `app.py` and the frontend never name a

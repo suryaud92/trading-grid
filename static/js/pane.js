@@ -324,7 +324,7 @@
       const refreshMs = src.stream.refresh_ms;
       if (refreshMs) {
         this.refreshTimer = setInterval(() => {
-          if (!document.hidden) this.refreshHistory();
+          if (!document.hidden) this.refreshHistory(false);
         }, refreshMs);
       }
     }
@@ -334,18 +334,37 @@
       if (this.refreshTimer) { clearInterval(this.refreshTimer); this.refreshTimer = null; }
     }
 
-    async refreshHistory() {
+    /* Periodic top-up.
+     *
+     * Only the newest bar or two actually change, so the routine refresh asks
+     * for a handful of candles and merges them in. Re-pulling the full 600
+     * every minute cost ~65 KB per pane per minute, which on eight panes is
+     * about 4 GB a month — enough to blow a free host's bandwidth allowance
+     * for the sake of data we already had. `full` forces a complete re-pull,
+     * used when the tab comes back into view. */
+    async refreshHistory(full) {
       const token = this.reqToken;
       try {
         const res = await Feeds.api.candles(
-          this.config.source, this.config.symbol, this.config.timeframe, 600
+          this.config.source, this.config.symbol, this.config.timeframe, full ? 600 : 10
         );
         if (token !== this.reqToken || !res.candles || !res.candles.length) return;
-        this.candles = res.candles;
+
+        if (full) {
+          this.candles = res.candles;
+        } else {
+          const byTime = new Map(this.candles.map((c) => [c.time, c]));
+          res.candles.forEach((c) => byTime.set(c.time, c));   // newer bar wins
+          this.candles = Array.from(byTime.values())
+            .sort((a, b) => a.time - b.time)
+            .slice(-1500);
+        }
+
         this.series.setData(this.chartData());
         this.applyIndicators();
-        this.lastBar = Object.assign({}, res.candles[res.candles.length - 1]);
-        this.refPrice = this.computeReference(res.candles);
+        const last = this.candles[this.candles.length - 1];
+        this.lastBar = Object.assign({}, last);
+        this.refPrice = this.computeReference(this.candles);
       } catch (_) { /* a failed refresh should not disturb the pane */ }
     }
 
