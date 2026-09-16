@@ -37,13 +37,20 @@ says so out loud. Never expose that configuration to the internet.
 Click **fx** on any pane. Fourteen indicators, computed server-side with
 **pandas-ta**:
 
-| On the chart | In a band below |
-|---|---|
-| SMA, EMA, WMA, Bollinger, Supertrend, VWAP | RSI, MACD, Stochastic, ATR, ADX, CCI, MFI, OBV |
+**35 of them**, with a filter box in the menu:
 
-Add as many overlays as you like (the same one twice with different periods is
-fine — SMA 20 and SMA 50 side by side) and **one band indicator at a time**, so
-small panes stay readable. Every parameter is editable and saved per pane.
+| On the chart (15) | In a band below (20) |
+|---|---|
+| SMA, EMA, WMA, HMA, DEMA, TEMA, ALMA, VWMA, Bollinger, Keltner, Donchian, Supertrend, VWAP, Parabolic SAR, Ichimoku | RSI, Stoch RSI, MACD, Stochastic, ATR, NATR, ADX, CCI, MFI, OBV, CMF, Klinger, Aroon, Williams %R, ROC, TRIX, Choppiness, Z-Score, Awesome Osc, Ultimate Osc |
+
+Add as many overlays as you like — the same one twice with different periods is
+fine, so SMA 20 and SMA 50 sit together — and **up to three bands**, which stack
+vertically. Each band gets its own price scale, because their ranges are nothing
+alike: RSI is 0-100 while OBV runs to millions, and sharing a scale would
+flatten both. Three is the cap because a fourth is unreadable in a grid pane.
+
+The library actually exposes **193** indicators; the catalog is a curated subset.
+Adding another is one `Spec(...)` entry in `indicators.py`.
 
 `pandas-ta-classic` is used rather than `pandas-ta`: the original now depends on
 numba, which has no Python 3.14 wheels and cannot be installed on current
@@ -57,12 +64,28 @@ sync.
 
 Two consequences of computing on the server worth knowing:
 
-* Indicators update with the candle refresh (every 60s), not on every price
-  tick. The in-progress bar's indicator value therefore lags slightly.
+* Indicators update with the candle refresh, not on every price tick. That
+  refresh is **4s on Zerodha and 15s on yfinance** — there is no point polling
+  yfinance faster, because its prices are already ~15 minutes delayed.
+  Identical requests are served from a compute cache keyed on the last bar, so
+  a fast poll costs almost nothing on the server (~1000x faster than a cold
+  computation).
 * Values are always computed over the full history even when the browser is
   only topping up the last ten bars — a 200-period SMA needs 200 bars. The
   server computes deep and trims, so the cheap refresh gives numbers identical
-  to a full reload. Roughly 5.6 KB per pane per minute with four indicators on.
+  to a full reload. A top-up is ~2.2 KB with five indicators running; eight
+  panes at the 4s Zerodha rate come to about 2.2 GB/month, at 15s about 0.6 GB,
+  against Render's 5 GB allowance.
+
+### Not included: Volume Profile and FVG
+
+Neither is a line over time, so neither fits the current drawing code.
+`pandas-ta` does provide Volume Profile (`vp`), but it returns a table of price
+bins and volumes that has to be drawn as a horizontal histogram. Fair Value Gaps
+are not in any library — the rule is simple (a three-bar imbalance) but the
+result is a set of rectangles. Both need a canvas overlay positioned with the
+chart's `priceToCoordinate`, which is a separate piece of work from the
+indicator catalog.
 
 ### Alerts
 

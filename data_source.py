@@ -375,7 +375,7 @@ register_source(
     candles=yfinance_candles,
     quotes=yfinance_quotes,
     search=yfinance_search,
-    stream={"kind": "poll", "interval_ms": 4000, "refresh_ms": 60000},
+    stream={"kind": "poll", "interval_ms": 4000, "refresh_ms": 15000},
     default_symbol="^NSEI",
     default_timeframe="15m",
     display_tz_offset_min=330,
@@ -487,7 +487,10 @@ def kite_candles(symbol, timeframe, limit):
     to_date = datetime.now()
     from_date = to_date - timedelta(days=max(span_days, 2))
 
-    bars = _kite().historical_data(_kite_token(symbol), from_date, to_date, interval)
+    bars = cached(
+        3.0, f"kite:c:{symbol}:{interval}:{span_days}",
+        lambda: _kite().historical_data(_kite_token(symbol), from_date, to_date, interval),
+    )
     return [
         {
             "time": int(b["date"].timestamp()),
@@ -636,7 +639,7 @@ def configure_zerodha() -> bool:
         symbols=_kite_symbol_list(),
         candles=kite_candles,
         quotes=kite_quotes,
-        stream={"kind": "poll", "interval_ms": 1000, "refresh_ms": 60000},
+        stream={"kind": "poll", "interval_ms": 1000, "refresh_ms": 4000},
         default_symbol="NSE:NIFTY 50",
         default_timeframe="15m",
         display_tz_offset_min=330,

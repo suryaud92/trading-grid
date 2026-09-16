@@ -72,7 +72,7 @@ def api_candles():
     src = ds.get_source(request.args["source"])
     symbol = request.args["symbol"]
     timeframe = request.args.get("timeframe", src.default_timeframe)
-    limit = max(10, min(int(request.args.get("limit", 500)), 5000))
+    limit = max(2, min(int(request.args.get("limit", 500)), 5000))
     spec = request.args.get("indicators", "")
 
     candles = src.candles(symbol, timeframe, limit)

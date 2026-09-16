@@ -53,19 +53,27 @@
       return !!s && s.pane === 'sub';
     },
 
+    /* Bands stack vertically, so more than a few makes each unreadable in a
+     * small grid pane. Overlays have no such limit. */
+    MAX_BANDS: 3,
+
     /** Drop anything the server no longer offers, and cap the list. */
     clean(list) {
       const out = [];
-      let subUsed = false;
+      let bands = 0;
       (list || []).forEach((e) => {
         if (!e || !this.byId[e.id]) return;
         if (this.isSub(e.id)) {
-          if (subUsed) return;          // only one sub-pane at a time
-          subUsed = true;
+          if (bands >= this.MAX_BANDS) return;
+          bands += 1;
         }
         out.push({ id: e.id, params: (e.params || []).map(Number) });
       });
-      return out.slice(0, 8);
+      return out.slice(0, 10);
+    },
+
+    bandCount(list) {
+      return (list || []).filter((e) => this.isSub(e.id)).length;
     },
   };
 

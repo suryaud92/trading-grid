@@ -350,7 +350,7 @@
       const token = this.reqToken;
       try {
         const res = await Feeds.api.candles(
-          this.config.source, this.config.symbol, this.config.timeframe, full ? 600 : 10,
+          this.config.source, this.config.symbol, this.config.timeframe, full ? 600 : 3,
           Indicators.spec(this.config.indicators)
         );
         if (token !== this.reqToken || !res.candles || !res.candles.length) return;
@@ -450,10 +450,30 @@
         }
       }
 
-      let hasSub = false;
+      /* Each band indicator gets its own price scale and its own horizontal
+       * slice at the bottom, because their ranges are nothing alike — RSI is
+       * 0-100, OBV runs to millions. Sharing a scale would flatten both. */
+      const bandGroups = [];
+      for (const line of wanted.values()) {
+        if (line.pane === 'sub' && bandGroups.indexOf(line.group) === -1) {
+          bandGroups.push(line.group);
+        }
+      }
+      const n = bandGroups.length;
+      const bandH = n ? Math.min(0.22, 0.62 / n) : 0;
+      const scaleFor = (group) => 'sub' + bandGroups.indexOf(group);
+      const marginsFor = (i) => ({ top: 1 - (n - i) * bandH, bottom: (n - 1 - i) * bandH });
+
       for (const [key, line] of wanted) {
-        if (line.pane === 'sub') hasSub = true;
+        const isSub = line.pane === 'sub';
+        const scaleId = isSub ? scaleFor(line.group) : 'right';
         let series = this.indSeries.get(key);
+
+        if (series && series.__scaleId !== scaleId) {
+          try { this.chart.removeSeries(series); } catch (_) {}
+          this.indSeries.delete(key);
+          series = null;
+        }
         if (!series) {
           series = addLine(this.chart, {
             color: line.color,
@@ -462,12 +482,12 @@
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
-            priceScaleId: line.pane === 'sub' ? 'sub' : 'right',
+            priceScaleId: scaleId,
           });
-          if (line.pane === 'sub') {
-            this.chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+          series.__scaleId = scaleId;
+          if (isSub) {
             (line.guides || []).forEach((lvl) => series.createPriceLine({
-              price: lvl, color: 'rgba(139,151,171,.4)', lineWidth: 1,
+              price: lvl, color: 'rgba(139,151,171,.35)', lineWidth: 1,
               lineStyle: 2, axisLabelVisible: false,
             }));
           }
@@ -476,8 +496,11 @@
         series.setData((line.data || []).map((p) => ({ time: p.time + shift, value: p.value })));
       }
 
+      bandGroups.forEach((g, i) => {
+        this.chart.priceScale('sub' + i).applyOptions({ scaleMargins: marginsFor(i) });
+      });
       this.chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0.12, bottom: hasSub ? 0.3 : 0.12 },
+        scaleMargins: { top: 0.12, bottom: n ? n * bandH + 0.02 : 0.12 },
       });
       this.btnInd.classList.toggle('on', this.config.indicators.length > 0);
     }
@@ -540,24 +563,50 @@
           });
 
           host.appendChild(el('div', 'pop-title', 'Add'));
-          ['price', 'sub'].forEach((paneKind) => {
-            const group = el('div', 'pop-chips');
-            Indicators.catalog.filter((c) => c.pane === paneKind).forEach((c) => {
-              const chip = el('button', 'pop-chip', c.label);
-              chip.type = 'button';
-              chip.title = c.note || ('Add ' + c.label);
-              chip.addEventListener('click', () => {
-                this.setIndicators(list.concat([{ id: c.id, params: Indicators.defaults(c.id) }]));
-                draw();
+
+          const search = el('input', 'pop-search');
+          search.type = 'search';
+          search.placeholder = 'Filter ' + Indicators.catalog.length + ' indicators…';
+          host.appendChild(search);
+
+          const groups = el('div');
+          host.appendChild(groups);
+
+          const bandsUsed = Indicators.bandCount(list);
+          const renderChips = (q) => {
+            groups.innerHTML = '';
+            const needle = (q || '').trim().toLowerCase();
+            [['price', 'On the chart'], ['sub', 'In a band below']].forEach(([kind, heading]) => {
+              const matches = Indicators.catalog.filter((c) =>
+                c.pane === kind &&
+                (!needle || c.label.toLowerCase().includes(needle) || c.id.includes(needle)));
+              if (!matches.length) return;
+              const full = kind === 'sub' && bandsUsed >= Indicators.MAX_BANDS;
+              groups.appendChild(el('div', 'pop-sub',
+                heading + (full ? ' — ' + Indicators.MAX_BANDS + ' is the limit' : '')));
+              const row = el('div', 'pop-chips');
+              matches.forEach((c) => {
+                const chip = el('button', 'pop-chip', c.label);
+                chip.type = 'button';
+                chip.disabled = full;
+                chip.title = c.note || ('Add ' + c.label);
+                chip.addEventListener('click', () => {
+                  this.setIndicators(list.concat([{ id: c.id, params: Indicators.defaults(c.id) }]));
+                  draw();
+                });
+                row.appendChild(chip);
               });
-              group.appendChild(chip);
+              groups.appendChild(row);
             });
-            host.appendChild(el('div', 'pop-sub', paneKind === 'price' ? 'On the chart' : 'In a band below'));
-            host.appendChild(group);
-          });
+            if (!groups.children.length) {
+              groups.appendChild(el('div', 'pop-empty', 'Nothing matches "' + q + '".'));
+            }
+          };
+          renderChips('');
+          search.addEventListener('input', () => renderChips(search.value));
 
           host.appendChild(el('div', 'pop-note',
-            'One band indicator at a time. Values come from pandas-ta on the server and '
+            'Bands stack, up to ' + Indicators.MAX_BANDS + '. Values come from pandas-ta on the server and '
             + 'update with the candle refresh, not on every tick.'));
         };
         draw();

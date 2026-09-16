@@ -236,6 +236,10 @@ def parse_spec(text: str) -> list:
     return out[:8]                      # a sane cap per pane
 
 
+_calc_cache = {}
+_calc_lock = __import__("threading").Lock()
+
+
 def compute(candles, spec_text, tail=None):
     """Compute the requested indicators over the FULL candle history.
 
@@ -247,6 +251,18 @@ def compute(candles, spec_text, tail=None):
     specs = parse_spec(spec_text)
     if not specs or not candles:
         return []
+
+    # Identical requests arrive from every pane every few seconds once the
+    # refresh is fast, and each full computation is tens of milliseconds. The
+    # result only changes when a new candle lands, so key the cache on the last
+    # bar's timestamp and close: same bar, same answer.
+    last = candles[-1]
+    ck = (spec_text, len(candles), last["time"], last["close"])
+    with _calc_lock:
+        hit = _calc_cache.get(ck)
+    if hit is not None:
+        return [dict(line, data=line["data"][-tail:] if tail else line["data"])
+                for line in hit]
 
     df = _frame(candles)
     times = [int(t) for t in df["time"].tolist()]
@@ -275,8 +291,6 @@ def compute(candles, spec_text, tail=None):
                 data.append({"time": t, "value": round(float(v), 6)})
             if not data:
                 continue
-            if tail:
-                data = data[-tail:]
             out.append({
                 "key": f"{key_id}#{line.key}",
                 "group": key_id,
@@ -288,9 +302,151 @@ def compute(candles, spec_text, tail=None):
                 "guides": GUIDES.get(ind_id, []) if line is spec.lines[0] else [],
                 "data": data,
             })
-    return out
+
+    with _calc_lock:
+        if len(_calc_cache) > 200:
+            _calc_cache.clear()
+        _calc_cache[ck] = out
+    return [dict(line, data=line["data"][-tail:] if tail else line["data"]) for line in out]
 
 
 def _fmt(v):
     f = float(v)
     return str(int(f)) if f == int(f) else str(f)
+
+def _hma(df, length):   return {"hma": _ta().hma(df.close, length=int(length))}
+def _dema(df, length):  return {"dema": _ta().dema(df.close, length=int(length))}
+def _tema(df, length):  return {"tema": _ta().tema(df.close, length=int(length))}
+def _alma(df, length):  return {"alma": _ta().alma(df.close, length=int(length))}
+def _vwma(df, length):  return {"vwma": _ta().vwma(df.close, df.volume, length=int(length))}
+
+
+def _keltner(df, length, scalar):
+    out = _ta().kc(df.high, df.low, df.close, length=int(length), scalar=float(scalar))
+    c = list(out.columns)
+    return {"upper": out[next(x for x in c if x.startswith("KCU"))],
+            "middle": out[next(x for x in c if x.startswith("KCB"))],
+            "lower": out[next(x for x in c if x.startswith("KCL"))]}
+
+
+def _donchian(df, length):
+    out = _ta().donchian(df.high, df.low, lower_length=int(length), upper_length=int(length))
+    c = list(out.columns)
+    return {"upper": out[next(x for x in c if x.startswith("DCU"))],
+            "middle": out[next(x for x in c if x.startswith("DCM"))],
+            "lower": out[next(x for x in c if x.startswith("DCL"))]}
+
+
+def _psar(df, af, maxaf):
+    out = _ta().psar(df.high, df.low, df.close, af=float(af), max_af=float(maxaf))
+    c = list(out.columns)
+    long_c = next(x for x in c if x.startswith("PSARl"))
+    short_c = next(x for x in c if x.startswith("PSARs"))
+    return {"psar": out[long_c].fillna(out[short_c])}
+
+
+def _ichimoku(df, tenkan, kijun, senkou):
+    vis, _fwd = _ta().ichimoku(df.high, df.low, df.close,
+                               tenkan=int(tenkan), kijun=int(kijun), senkou=int(senkou))
+    c = list(vis.columns)
+    pick = lambda pre: vis[next(x for x in c if x.startswith(pre))]
+    return {"span_a": pick("ISA"), "span_b": pick("ISB"),
+            "tenkan": pick("ITS"), "kijun": pick("IKS")}
+
+
+def _stochrsi(df, length):
+    out = _ta().stochrsi(df.close, length=int(length))
+    c = list(out.columns)
+    return {"k": out[next(x for x in c if x.startswith("STOCHRSIk"))],
+            "d": out[next(x for x in c if x.startswith("STOCHRSId"))]}
+
+
+def _aroon(df, length):
+    out = _ta().aroon(df.high, df.low, length=int(length))
+    c = list(out.columns)
+    return {"up": out[next(x for x in c if x.startswith("AROONU"))],
+            "down": out[next(x for x in c if x.startswith("AROOND"))]}
+
+
+def _willr(df, length):  return {"willr": _ta().willr(df.high, df.low, df.close, length=int(length))}
+def _roc(df, length):    return {"roc": _ta().roc(df.close, length=int(length))}
+def _trix(df, length):   return {"trix": _ta().trix(df.close, length=int(length)).iloc[:, 0]}
+def _cmf(df, length):    return {"cmf": _ta().cmf(df.high, df.low, df.close, df.volume, length=int(length))}
+def _natr(df, length):   return {"natr": _ta().natr(df.high, df.low, df.close, length=int(length))}
+def _chop(df, length):   return {"chop": _ta().chop(df.high, df.low, df.close, length=int(length))}
+def _zscore(df, length): return {"zscore": _ta().zscore(df.close, length=int(length))}
+def _ao(df):             return {"ao": _ta().ao(df.high, df.low)}
+def _uo(df):             return {"uo": _ta().uo(df.high, df.low, df.close)}
+def _kvo(df):            return {"kvo": _ta().kvo(df.high, df.low, df.close, df.volume).iloc[:, 0]}
+
+
+CATALOG += [
+    # ---- more overlays ---------------------------------------------------
+    Spec("hma", "HMA", "price", [Param("length", 20)],
+         [Line("hma", "HMA", "#fb7185")], _hma),
+    Spec("dema", "DEMA", "price", [Param("length", 20)],
+         [Line("dema", "DEMA", "#22d3ee")], _dema),
+    Spec("tema", "TEMA", "price", [Param("length", 20)],
+         [Line("tema", "TEMA", "#4ade80")], _tema),
+    Spec("alma", "ALMA", "price", [Param("length", 20)],
+         [Line("alma", "ALMA", "#facc15")], _alma),
+    Spec("vwma", "VWMA", "price", [Param("length", 20)],
+         [Line("vwma", "VWMA", "#f97316")], _vwma),
+    Spec("keltner", "Keltner", "price", [Param("length", 20), Param("scalar", 2, 0.1, 10)],
+         [Line("upper", "KC upper", "#818cf8", width=1),
+          Line("middle", "KC mid", "#818cf8", style="dashed", width=1),
+          Line("lower", "KC lower", "#818cf8", width=1)], _keltner),
+    Spec("donchian", "Donchian", "price", [Param("length", 20)],
+         [Line("upper", "DC upper", "#94a3b8", width=1),
+          Line("middle", "DC mid", "#94a3b8", style="dashed", width=1),
+          Line("lower", "DC lower", "#94a3b8", width=1)], _donchian),
+    Spec("psar", "Parabolic SAR", "price", [Param("af", 0.02, 0.001, 1), Param("maxaf", 0.2, 0.01, 1)],
+         [Line("psar", "PSAR", "#f43f5e", width=1)], _psar),
+    Spec("ichimoku", "Ichimoku", "price",
+         [Param("tenkan", 9), Param("kijun", 26), Param("senkou", 52)],
+         [Line("tenkan", "Tenkan", "#38bdf8", width=1),
+          Line("kijun", "Kijun", "#f43f5e", width=1),
+          Line("span_a", "Span A", "#4ade80", style="dashed", width=1),
+          Line("span_b", "Span B", "#f59e0b", style="dashed", width=1)], _ichimoku),
+
+    # ---- more band indicators -------------------------------------------
+    Spec("stochrsi", "Stoch RSI", "sub", [Param("length", 14)],
+         [Line("k", "%K", "#38bdf8"), Line("d", "%D", "#f59e0b")], _stochrsi,
+         note="0-100, with 20/80 guides."),
+    Spec("aroon", "Aroon", "sub", [Param("length", 14)],
+         [Line("up", "Aroon up", "#4ade80"), Line("down", "Aroon down", "#f43f5e")], _aroon),
+    Spec("willr", "Williams %R", "sub", [Param("length", 14)],
+         [Line("willr", "Williams %R", "#c084fc")], _willr, note="-100 to 0."),
+    Spec("roc", "ROC", "sub", [Param("length", 12)],
+         [Line("roc", "ROC", "#facc15")], _roc),
+    Spec("trix", "TRIX", "sub", [Param("length", 18)],
+         [Line("trix", "TRIX", "#22d3ee")], _trix),
+    Spec("cmf", "Chaikin MF", "sub", [Param("length", 20)],
+         [Line("cmf", "CMF", "#34d399")], _cmf),
+    Spec("natr", "NATR", "sub", [Param("length", 14)],
+         [Line("natr", "NATR", "#fb923c")], _natr, note="ATR as a percentage of price."),
+    Spec("chop", "Choppiness", "sub", [Param("length", 14)],
+         [Line("chop", "CHOP", "#a78bfa")], _chop, note="Above 61 is choppy, below 38 trending."),
+    Spec("zscore", "Z-Score", "sub", [Param("length", 30)],
+         [Line("zscore", "Z-Score", "#f472b6")], _zscore),
+    Spec("ao", "Awesome Osc", "sub", [],
+         [Line("ao", "AO", "#60a5fa")], _ao),
+    Spec("uo", "Ultimate Osc", "sub", [],
+         [Line("uo", "UO", "#fbbf24")], _uo, note="0-100, with 30/70 guides."),
+    Spec("kvo", "Klinger", "sub", [],
+         [Line("kvo", "KVO", "#94a3b8")], _kvo),
+]
+
+BY_ID = {s.id: s for s in CATALOG}
+GUIDES.update({
+    "stochrsi": [20, 80],
+    "willr": [-80, -20],
+    "uo": [30, 70],
+    "chop": [38.2, 61.8],
+    "aroon": [50],
+    "zscore": [-2, 0, 2],
+    "roc": [0],
+    "cmf": [0],
+    "ao": [0],
+    "trix": [0],
+})
