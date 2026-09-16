@@ -27,18 +27,42 @@ says so out loud. Never expose that configuration to the internet.
 | **Charts 1 / 2 / 4 / 6 / 8** | 1 = full screen, 2 = side by side, 4 = 2×2, 6 = 3×2, 8 = 4×2. Also bound to the number keys. |
 | **Symbol search** | Type in the symbol box and matches appear as you go, by ticker *or* company name ("tata" finds Tata Steel, Tata Motors and TCS). Anything not in the list can be entered as typed and is remembered. |
 | **Timeframes** | `1m 5m 15m 30m 1h 1D 1W 1MO` (Kite adds `3m` and `10m`), independent per pane. |
-| **ƒx Indicators** | SMA ×2, EMA, Bollinger Bands and RSI, with editable periods. RSI gets its own band under the price with 30/70 guides. Saved per pane. |
+| **fx Indicators** | 14 indicators via pandas-ta — moving averages, Bollinger, Supertrend, VWAP on the chart; RSI, MACD, Stochastic, ATR, ADX, CCI, MFI, OBV in a band below. Editable periods, saved per pane. |
 | **🔔 Alerts** | Price alerts above/below a level. Fires a toast, a chime and a desktop notification. |
 | **Ticker bar** | Flashes green on an uptick, red on a downtick. |
 | **⚙ Settings** | Connect/disconnect Zerodha. |
 
 ### Indicators
 
-Click **ƒx** on any pane. Each row has a checkbox and its period(s), so SMA can
-be 20 and 50 at once, Bollinger takes a period and a multiplier. Everything is
-computed in the browser from the candles already on screen — no extra requests.
-The maths is in `static/js/indicators.js` and is unit-tested (RSI is Wilder's,
-checked against an independent implementation).
+Click **fx** on any pane. Fourteen indicators, computed server-side with
+**pandas-ta**:
+
+| On the chart | In a band below |
+|---|---|
+| SMA, EMA, WMA, Bollinger, Supertrend, VWAP | RSI, MACD, Stochastic, ATR, ADX, CCI, MFI, OBV |
+
+Add as many overlays as you like (the same one twice with different periods is
+fine — SMA 20 and SMA 50 side by side) and **one band indicator at a time**, so
+small panes stay readable. Every parameter is editable and saved per pane.
+
+`pandas-ta-classic` is used rather than `pandas-ta`: the original now depends on
+numba, which has no Python 3.14 wheels and cannot be installed on current
+interpreters. The fork keeps the same API and works on pandas 3 / numpy 2. Its
+RSI was checked against an independent Wilder implementation and matches to
+2.5e-14.
+
+**Adding one is a single entry** in `indicators.py` — the API, the pane menu and
+the chart all read from that catalog, so there is no frontend list to keep in
+sync.
+
+Two consequences of computing on the server worth knowing:
+
+* Indicators update with the candle refresh (every 60s), not on every price
+  tick. The in-progress bar's indicator value therefore lags slightly.
+* Values are always computed over the full history even when the browser is
+  only topping up the last ten bars — a 200-period SMA needs 200 bars. The
+  server computes deep and trims, so the cheap refresh gives numbers identical
+  to a full reload. Roughly 5.6 KB per pane per minute with four indicators on.
 
 ### Alerts
 

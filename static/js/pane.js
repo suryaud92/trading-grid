@@ -47,8 +47,9 @@
   class Pane {
     constructor(index, config, ctx) {
       this.index = index;
-      this.config = Object.assign({ indicators: {} }, config);
-      this.config.indicators = Object.assign({}, this.config.indicators);
+      this.config = Object.assign({ indicators: [] }, config);
+      this.config.indicators = Array.isArray(this.config.indicators)
+        ? this.config.indicators.slice() : [];
       this.ctx = ctx;
       this.unsubLive = null;
       this.refreshTimer = null;
@@ -57,6 +58,7 @@
       this.lastBar = null;
       this.candles = [];
       this.indSeries = new Map();
+      this.indLines = new Map();   // key -> [{time,value}] merged history
       this.decimals = 2;
       this.reqToken = 0;
       this.build();
@@ -248,7 +250,8 @@
 
       try {
         const res = await Feeds.api.candles(
-          this.config.source, this.config.symbol, this.config.timeframe, 600
+          this.config.source, this.config.symbol, this.config.timeframe, 600,
+          Indicators.spec(this.config.indicators)
         );
         if (token !== this.reqToken) return;
         const candles = res.candles || [];
@@ -260,7 +263,8 @@
           priceFormat: { type: 'price', precision: this.decimals, minMove: Math.pow(10, -this.decimals) },
         });
         this.series.setData(this.chartData());
-        this.applyIndicators();
+        this.indLines = new Map((res.indicators || []).map((l) => [l.key, l]));
+        this.drawIndicators();
         this.chart.timeScale().fitContent();
 
         this.lastBar = Object.assign({}, candles[candles.length - 1]);
@@ -346,7 +350,8 @@
       const token = this.reqToken;
       try {
         const res = await Feeds.api.candles(
-          this.config.source, this.config.symbol, this.config.timeframe, full ? 600 : 10
+          this.config.source, this.config.symbol, this.config.timeframe, full ? 600 : 10,
+          Indicators.spec(this.config.indicators)
         );
         if (token !== this.reqToken || !res.candles || !res.candles.length) return;
 
@@ -361,7 +366,8 @@
         }
 
         this.series.setData(this.chartData());
-        this.applyIndicators();
+        this.mergeIndicators(res.indicators || [], full);
+        this.drawIndicators();
         const last = this.candles[this.candles.length - 1];
         this.lastBar = Object.assign({}, last);
         this.refPrice = this.computeReference(this.candles);
@@ -377,7 +383,6 @@
       const last = this.candles[this.candles.length - 1];
       if (last && last.time === c.time) this.candles[this.candles.length - 1] = c;
       else this.candles.push(c);
-      this.applyIndicators();
       this.setPrice(c.close);
     }
 
@@ -403,27 +408,41 @@
           time: bar.time + this.tzShift,
           open: bar.open, high: bar.high, low: bar.low, close: bar.close,
         });
-        this.applyIndicators();
       }
       this.setPrice(price);
     }
 
     /* ---------------------------------------------------- indicators */
-    applyIndicators() {
-      if (!this.chart) return;
-      const cfg = this.config.indicators || {};
-      const shift = this.tzShift;
-      const wanted = new Map();
 
-      Indicators.CATALOG.forEach((spec) => {
-        const on = cfg[spec.id];
-        if (!on) return;
-        Indicators.compute(spec.id, this.candles, on).forEach((line) => {
-          if (line.data && line.data.length) wanted.set(line.key, line);
-        });
+    /** Fold a top-up response into the series we already hold. */
+    mergeIndicators(lines, full) {
+      if (full) {
+        this.indLines = new Map(lines.map((l) => [l.key, l]));
+        return;
+      }
+      const seen = new Set();
+      lines.forEach((l) => {
+        seen.add(l.key);
+        const existing = this.indLines.get(l.key);
+        if (!existing) { this.indLines.set(l.key, l); return; }
+        const byTime = new Map(existing.data.map((p) => [p.time, p]));
+        l.data.forEach((p) => byTime.set(p.time, p));
+        existing.data = Array.from(byTime.values())
+          .sort((a, b) => a.time - b.time)
+          .slice(-1500);
+        Object.assign(existing, { color: l.color, style: l.style, width: l.width,
+                                  pane: l.pane, guides: l.guides, name: l.name });
       });
+      Array.from(this.indLines.keys()).forEach((k) => {
+        if (!seen.has(k)) this.indLines.delete(k);
+      });
+    }
 
-      /* drop series no longer wanted */
+    drawIndicators() {
+      if (!this.chart) return;
+      const shift = this.tzShift;
+      const wanted = this.indLines;
+
       for (const [key, series] of this.indSeries) {
         if (!wanted.has(key)) {
           try { this.chart.removeSeries(series); } catch (_) {}
@@ -431,101 +450,117 @@
         }
       }
 
-      const hasRsi = Array.from(wanted.values()).some((l) => l.scale === 'rsi');
-
+      let hasSub = false;
       for (const [key, line] of wanted) {
+        if (line.pane === 'sub') hasSub = true;
         let series = this.indSeries.get(key);
         if (!series) {
           series = addLine(this.chart, {
             color: line.color,
             lineWidth: line.width || 2,
-            lineStyle: line.dashed ? 2 : 0,
+            lineStyle: line.style === 'dashed' ? 2 : 0,
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
-            priceScaleId: line.scale === 'rsi' ? 'rsi' : 'right',
+            priceScaleId: line.pane === 'sub' ? 'sub' : 'right',
           });
-          if (line.scale === 'rsi') {
-            this.chart.priceScale('rsi').applyOptions({
-              scaleMargins: { top: 0.78, bottom: 0 },
-            });
-            [30, 70].forEach((lvl) => series.createPriceLine({
+          if (line.pane === 'sub') {
+            this.chart.priceScale('sub').applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+            (line.guides || []).forEach((lvl) => series.createPriceLine({
               price: lvl, color: 'rgba(139,151,171,.4)', lineWidth: 1,
               lineStyle: 2, axisLabelVisible: false,
             }));
           }
           this.indSeries.set(key, series);
         }
-        series.setData(line.data.map((p) => ({ time: p.time + shift, value: p.value })));
+        series.setData((line.data || []).map((p) => ({ time: p.time + shift, value: p.value })));
       }
 
-      /* make room at the bottom when RSI is showing */
       this.chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0.12, bottom: hasRsi ? 0.3 : 0.12 },
+        scaleMargins: { top: 0.12, bottom: hasSub ? 0.3 : 0.12 },
       });
-
-      this.btnInd.classList.toggle('on', Object.keys(cfg).some((k) => cfg[k]));
+      this.btnInd.classList.toggle('on', this.config.indicators.length > 0);
     }
 
-    openIndicatorMenu() {
+    setIndicators(list) {
+      this.config.indicators = Indicators.clean(list);
+      this.ctx.onChange(this.index, this.config);
+      this.btnInd.classList.toggle('on', this.config.indicators.length > 0);
+      this.refreshHistory(true);
+    }
+
+    async openIndicatorMenu() {
+      await Indicators.load();
       Popover.open(this.btnInd, (host, close) => {
-        host.appendChild(el('div', 'pop-title', 'Indicators'));
-        const cfg = Object.assign({}, this.config.indicators);
+        const draw = () => {
+          host.innerHTML = '';
+          const list = this.config.indicators;
 
-        Indicators.CATALOG.forEach((spec) => {
-          const row = el('label', 'pop-row');
-          const cb = el('input');
-          cb.type = 'checkbox';
-          cb.checked = !!cfg[spec.id];
+          host.appendChild(el('div', 'pop-title', 'Indicators'));
+          if (!list.length) {
+            host.appendChild(el('div', 'pop-empty', 'None yet — add one below.'));
+          }
 
-          const swatch = el('span', 'pop-swatch');
-          swatch.style.background = spec.color;
-          const name = el('span', 'pop-name', spec.label);
+          list.forEach((entry, i) => {
+            const spec = Indicators.byId[entry.id];
+            const row = el('div', 'pop-active');
+            const dot = el('span', 'pop-swatch');
+            dot.style.background = spec.lines[0].color;
+            const name = el('span', 'pop-name', spec.label);
 
-          const inputs = el('span', 'pop-fields');
-          const fieldEls = {};
-          spec.fields.forEach(([field, dflt]) => {
-            const n = el('input', 'pop-num');
-            n.type = 'number';
-            n.min = '1';
-            n.value = String((cfg[spec.id] && cfg[spec.id][field]) || dflt);
-            n.title = field;
-            fieldEls[field] = n;
-            inputs.appendChild(n);
+            const fields = el('span', 'pop-fields');
+            spec.params.forEach((pmeta, pi) => {
+              const n = el('input', 'pop-num');
+              n.type = 'number';
+              n.step = 'any';
+              n.min = String(pmeta.min);
+              n.max = String(pmeta.max);
+              n.title = pmeta.name;
+              n.value = String(entry.params[pi] != null ? entry.params[pi] : pmeta.default);
+              n.addEventListener('change', () => {
+                const v = Math.min(Math.max(Number(n.value) || pmeta.default, pmeta.min), pmeta.max);
+                n.value = String(v);
+                entry.params[pi] = v;
+                this.setIndicators(list);
+              });
+              fields.appendChild(n);
+            });
+
+            const del = el('button', 'pop-x', '✕');
+            del.type = 'button';
+            del.title = 'Remove';
+            del.addEventListener('click', () => {
+              list.splice(i, 1);
+              this.setIndicators(list);
+              draw();
+            });
+            row.append(dot, name, fields, del);
+            host.appendChild(row);
+            if (spec.note) host.appendChild(el('div', 'pop-note tight', spec.note));
           });
 
-          const commit = () => {
-            if (cb.checked) {
-              const v = {};
-              Object.keys(fieldEls).forEach((f) => {
-                v[f] = Math.max(1, Number(fieldEls[f].value) || 1);
+          host.appendChild(el('div', 'pop-title', 'Add'));
+          ['price', 'sub'].forEach((paneKind) => {
+            const group = el('div', 'pop-chips');
+            Indicators.catalog.filter((c) => c.pane === paneKind).forEach((c) => {
+              const chip = el('button', 'pop-chip', c.label);
+              chip.type = 'button';
+              chip.title = c.note || ('Add ' + c.label);
+              chip.addEventListener('click', () => {
+                this.setIndicators(list.concat([{ id: c.id, params: Indicators.defaults(c.id) }]));
+                draw();
               });
-              cfg[spec.id] = v;
-            } else {
-              delete cfg[spec.id];
-            }
-            this.config.indicators = cfg;
-            this.ctx.onChange(this.index, this.config);
-            this.applyIndicators();
-          };
+              group.appendChild(chip);
+            });
+            host.appendChild(el('div', 'pop-sub', paneKind === 'price' ? 'On the chart' : 'In a band below'));
+            host.appendChild(group);
+          });
 
-          cb.addEventListener('change', commit);
-          Object.values(fieldEls).forEach((n) => n.addEventListener('change', commit));
-          row.append(cb, swatch, name, inputs);
-          host.appendChild(row);
-        });
-
-        const foot = el('div', 'pop-foot');
-        const clear = el('button', 'btn small', 'Clear all');
-        clear.type = 'button';
-        clear.addEventListener('click', () => {
-          this.config.indicators = {};
-          this.ctx.onChange(this.index, this.config);
-          this.applyIndicators();
-          close();
-        });
-        foot.appendChild(clear);
-        host.appendChild(foot);
+          host.appendChild(el('div', 'pop-note',
+            'One band indicator at a time. Values come from pandas-ta on the server and '
+            + 'update with the candle refresh, not on every tick.'));
+        };
+        draw();
       });
     }
 

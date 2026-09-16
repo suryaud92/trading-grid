@@ -1,137 +1,73 @@
-/* indicators.js — the maths. Pure functions over a candle array, no DOM.
+/* indicators.js — client side of the indicator system.
  *
- * Every function takes candles [{time,open,high,low,close,volume}] ascending
- * and returns [{time, value}] ready to hand to a Lightweight Charts line
- * series. Leading bars with too little history are omitted rather than
- * returned as nulls, which is what the chart library expects.
+ * The maths used to live here in JavaScript. It now runs on the server with
+ * pandas-ta (see indicators.py), which buys us 14 indicators instead of 5 and
+ * one place to add more. This file just caches the catalog and turns a pane's
+ * configuration into the compact spec string the API expects.
+ *
+ * Config shape, stored per pane and persisted:
+ *     [ {id: 'sma', params: [20]}, {id: 'sma', params: [50]}, {id: 'rsi', params: [14]} ]
+ * Spec string sent to /api/candles:
+ *     sma:20,sma:50,rsi:14
  */
 (function (global) {
   'use strict';
 
-  function closes(candles) { return candles.map((c) => c.close); }
+  const Indicators = {
+    catalog: [],
+    byId: {},
+    loaded: false,
 
-  /** Simple moving average. */
-  function sma(candles, period) {
-    if (!(period > 0) || candles.length < period) return [];
-    const out = [];
-    let sum = 0;
-    for (let i = 0; i < candles.length; i++) {
-      sum += candles[i].close;
-      if (i >= period) sum -= candles[i - period].close;
-      if (i >= period - 1) out.push({ time: candles[i].time, value: sum / period });
-    }
-    return out;
-  }
+    async load() {
+      if (this.loaded) return this.catalog;
+      const { indicators } = await Feeds.api.json('/api/indicators');
+      this.catalog = indicators || [];
+      this.byId = {};
+      this.catalog.forEach((s) => { this.byId[s.id] = s; });
+      this.loaded = true;
+      return this.catalog;
+    },
 
-  /** Exponential moving average, seeded with the first SMA. */
-  function ema(candles, period) {
-    if (!(period > 0) || candles.length < period) return [];
-    const k = 2 / (period + 1);
-    const out = [];
-    let seed = 0;
-    for (let i = 0; i < period; i++) seed += candles[i].close;
-    let prev = seed / period;
-    out.push({ time: candles[period - 1].time, value: prev });
-    for (let i = period; i < candles.length; i++) {
-      prev = candles[i].close * k + prev * (1 - k);
-      out.push({ time: candles[i].time, value: prev });
-    }
-    return out;
-  }
+    spec(list) {
+      return (list || [])
+        .filter((e) => this.byId[e.id])
+        .map((e) => [e.id].concat(e.params || []).join(':'))
+        .join(',');
+    },
 
-  /** Bollinger bands -> {upper, middle, lower}, population standard deviation. */
-  function bollinger(candles, period, mult) {
-    period = period || 20;
-    mult = mult == null ? 2 : mult;
-    const upper = [], middle = [], lower = [];
-    if (candles.length < period) return { upper, middle, lower };
-    for (let i = period - 1; i < candles.length; i++) {
-      let sum = 0;
-      for (let j = i - period + 1; j <= i; j++) sum += candles[j].close;
-      const mean = sum / period;
-      let varSum = 0;
-      for (let j = i - period + 1; j <= i; j++) {
-        const d = candles[j].close - mean;
-        varSum += d * d;
-      }
-      const sd = Math.sqrt(varSum / period);
-      const t = candles[i].time;
-      middle.push({ time: t, value: mean });
-      upper.push({ time: t, value: mean + mult * sd });
-      lower.push({ time: t, value: mean - mult * sd });
-    }
-    return { upper, middle, lower };
-  }
+    /** Defaults for a freshly added indicator. */
+    defaults(id) {
+      const s = this.byId[id];
+      return s ? s.params.map((p) => p.default) : [];
+    },
 
-  /** Wilder's RSI (the standard one), 0-100. */
-  function rsi(candles, period) {
-    period = period || 14;
-    const out = [];
-    if (candles.length <= period) return out;
+    label(entry) {
+      const s = this.byId[entry.id];
+      if (!s) return entry.id;
+      const ps = (entry.params || []).join(', ');
+      return s.label + (ps ? ' ' + ps : '');
+    },
 
-    let gain = 0, loss = 0;
-    for (let i = 1; i <= period; i++) {
-      const d = candles[i].close - candles[i - 1].close;
-      if (d >= 0) gain += d; else loss -= d;
-    }
-    let avgGain = gain / period;
-    let avgLoss = loss / period;
-    const push = (i) => {
-      const value = avgLoss === 0 ? 100
-        : avgGain === 0 ? 0
-        : 100 - 100 / (1 + avgGain / avgLoss);
-      out.push({ time: candles[i].time, value: value });
-    };
-    push(period);
+    isSub(id) {
+      const s = this.byId[id];
+      return !!s && s.pane === 'sub';
+    },
 
-    for (let i = period + 1; i < candles.length; i++) {
-      const d = candles[i].close - candles[i - 1].close;
-      const g = d > 0 ? d : 0;
-      const l = d < 0 ? -d : 0;
-      avgGain = (avgGain * (period - 1) + g) / period;
-      avgLoss = (avgLoss * (period - 1) + l) / period;
-      push(i);
-    }
-    return out;
-  }
+    /** Drop anything the server no longer offers, and cap the list. */
+    clean(list) {
+      const out = [];
+      let subUsed = false;
+      (list || []).forEach((e) => {
+        if (!e || !this.byId[e.id]) return;
+        if (this.isSub(e.id)) {
+          if (subUsed) return;          // only one sub-pane at a time
+          subUsed = true;
+        }
+        out.push({ id: e.id, params: (e.params || []).map(Number) });
+      });
+      return out.slice(0, 8);
+    },
+  };
 
-  /* What a pane can switch on. `scale` "price" draws over the candles;
-   * "rsi" gets its own band at the bottom of the chart. */
-  const CATALOG = [
-    { id: 'sma1', label: 'SMA',        scale: 'price', color: '#f59e0b', fields: [['period', 20]] },
-    { id: 'sma2', label: 'SMA',        scale: 'price', color: '#a78bfa', fields: [['period', 50]] },
-    { id: 'ema',  label: 'EMA',        scale: 'price', color: '#38bdf8', fields: [['period', 20]] },
-    { id: 'bb',   label: 'Bollinger',  scale: 'price', color: '#64748b', fields: [['period', 20], ['mult', 2]] },
-    { id: 'rsi',  label: 'RSI',        scale: 'rsi',   color: '#e879f9', fields: [['period', 14]] },
-  ];
-
-  /** Compute one configured indicator -> [{key, color, data, ...}] lines. */
-  function compute(id, candles, cfg) {
-    const spec = CATALOG.find((c) => c.id === id);
-    if (!spec || !candles || !candles.length) return [];
-    const period = Number(cfg && cfg.period) || spec.fields[0][1];
-
-    switch (id) {
-      case 'sma1':
-      case 'sma2':
-        return [{ key: id, color: spec.color, width: 2, data: sma(candles, period) }];
-      case 'ema':
-        return [{ key: id, color: spec.color, width: 2, data: ema(candles, period) }];
-      case 'bb': {
-        const mult = Number(cfg && cfg.mult) || 2;
-        const b = bollinger(candles, period, mult);
-        return [
-          { key: 'bb_u', color: spec.color, width: 1, data: b.upper },
-          { key: 'bb_m', color: spec.color, width: 1, dashed: true, data: b.middle },
-          { key: 'bb_l', color: spec.color, width: 1, data: b.lower },
-        ];
-      }
-      case 'rsi':
-        return [{ key: 'rsi', color: spec.color, width: 2, scale: 'rsi', data: rsi(candles, period) }];
-      default:
-        return [];
-    }
-  }
-
-  global.Indicators = { sma, ema, bollinger, rsi, compute, CATALOG, closes };
-})(typeof window !== 'undefined' ? window : globalThis);
+  global.Indicators = Indicators;
+})(window);

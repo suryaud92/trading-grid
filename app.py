@@ -16,6 +16,7 @@ from werkzeug.exceptions import HTTPException
 
 import auth
 import data_source as ds
+import indicators as ind
 import settings as app_settings
 
 # static_url_path="" so the page can use RELATIVE asset paths and therefore
@@ -72,13 +73,34 @@ def api_candles():
     symbol = request.args["symbol"]
     timeframe = request.args.get("timeframe", src.default_timeframe)
     limit = max(10, min(int(request.args.get("limit", 500)), 5000))
+    spec = request.args.get("indicators", "")
+
+    candles = src.candles(symbol, timeframe, limit)
+    lines = []
+    if spec:
+        # Indicators are computed over the FULL history the source can give us,
+        # not just the slice being returned. A 200-period SMA needs 200 bars
+        # even when the browser is only topping up the last 10, so ask for a
+        # deep window and trim each series to match.
+        deep = src.candles(symbol, timeframe, max(limit, 1200))
+        lines = ind.compute(deep, spec, tail=len(candles))
+
     return jsonify({
         "source": src.key,
         "symbol": symbol,
         "timeframe": timeframe,
         "tzOffsetMin": src.display_tz_offset_min,
-        "candles": src.candles(symbol, timeframe, limit),
+        "candles": candles,
+        "indicators": lines,
     })
+
+
+@app.get("/api/indicators")
+@auth.require_admin
+def api_indicators():
+    """The indicator catalog. The pane menu is built from this, so adding an
+    entry in indicators.py is all it takes to expose a new one."""
+    return jsonify({"indicators": ind.catalog()})
 
 
 @app.get("/api/quotes")

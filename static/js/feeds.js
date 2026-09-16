@@ -40,11 +40,12 @@
     settings() { return api.json('/api/settings'); },
     post(path, body) { return api.json(path, { method: 'POST', body: body || {} }); },
 
-    candles(source, symbol, timeframe, limit) {
+    candles(source, symbol, timeframe, limit, indicators) {
       return api.json('/api/candles?source=' + encodeURIComponent(source) +
         '&symbol=' + encodeURIComponent(symbol) +
         '&timeframe=' + encodeURIComponent(timeframe) +
-        '&limit=' + (limit || 500));
+        '&limit=' + (limit || 500) +
+        (indicators ? '&indicators=' + encodeURIComponent(indicators) : ''));
     },
     quotes(source, symbols) {
       return api.json('/api/quotes?source=' + encodeURIComponent(source) +
