@@ -1,13 +1,3 @@
----
-title: Live Trading Grid
-emoji: 📈
-colorFrom: blue
-colorTo: gray
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Live Trading Grid
 
 A private split-screen dashboard of live Indian-market candlestick charts
@@ -59,15 +49,33 @@ So you need one small always-on Python process. Two shapes:
 Flask serves the API *and* the frontend. One deploy, no CORS, no second URL.
 Firebase is used only for Google sign-in, which is free on the Spark plan.
 
-Free hosts that run a persistent Python process: **Hugging Face Spaces**
-(Docker, stays up), **Render** free web service (sleeps after ~15 min idle,
-~1 min cold start), Fly.io, Koyeb. A `Dockerfile`, `Procfile` and `render.yaml`
-are all included.
+**Render's free tier** is the current free option, and `render.yaml` is included.
+Its documented limits matter here:
+
+* spins down after **15 minutes** with no traffic; the next visit takes ~1 min
+* **ephemeral filesystem** — wiped on every redeploy, restart *and* spin-down
+* 750 free instance-hours per month per workspace
+
+That second point is the one that stings: `instance/settings.json` does not
+survive a spin-down, so your saved Kite credentials vanish whenever the app has
+been idle. Put `KITE_API_KEY` and `KITE_API_SECRET` in Render's environment
+variables so only the access token is lost, and you are back to the daily
+reconnect you already have to do.
+
+To stop losing the access token too, move the settings store to Firestore (free
+on the Spark plan you are already using for sign-in) — `settings.py` is the only
+file that changes.
+
+> **Hugging Face Spaces no longer works for this.** Its free tier offers only
+> the Static SDK; Docker and Gradio Spaces now require a paid plan, and Static
+> cannot run Python. Other options that genuinely stay awake — Oracle Cloud's
+> Always Free VM, Google Cloud Run — need a credit card on file even where the
+> usage itself is free.
 
 > Serverless (Vercel/Netlify functions, Firebase Cloud Functions) does **not**
-> suit this: the Kite tick websocket needs a process that stays alive between
-> requests. Firebase Cloud Functions also require the paid Blaze plan — check
-> Google's current terms, but Spark won't deploy them.
+> suit the current design: the Kite tick websocket needs a process that stays
+> alive between requests. Firebase Cloud Functions also require the paid Blaze
+> plan.
 
 ### Option B — frontend on Firebase Hosting / GitHub Pages
 
