@@ -98,9 +98,12 @@ def api_candles():
 @app.get("/api/indicators")
 @auth.require_admin
 def api_indicators():
-    """The indicator catalog. The pane menu is built from this, so adding an
-    entry in indicators.py is all it takes to expose a new one."""
-    return jsonify({"indicators": ind.catalog()})
+    """The indicator catalog.
+
+    Returns everything pandas-ta offers that actually works, each flagged
+    `curated` or not. The fx menu shows the user's chosen subset; Settings
+    lets them pick from the whole list."""
+    return jsonify({"indicators": ind.full_catalog()})
 
 
 @app.get("/api/quotes")

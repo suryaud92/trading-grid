@@ -314,6 +314,15 @@ def _fmt(v):
     f = float(v)
     return str(int(f)) if f == int(f) else str(f)
 
+def _volume(df):
+    # Yahoo reports zero volume for indices (^NSEI, ^NSEBANK). Returning an
+    # all-zero series would give you an empty pane with a -0.05..0.05 axis, so
+    # return nothing and let the pane simply not appear.
+    if float(df.volume.abs().sum()) == 0:
+        return {}
+    return {"volume": df.volume}
+
+
 def _hma(df, length):   return {"hma": _ta().hma(df.close, length=int(length))}
 def _dema(df, length):  return {"dema": _ta().dema(df.close, length=int(length))}
 def _tema(df, length):  return {"tema": _ta().tema(df.close, length=int(length))}
@@ -381,6 +390,11 @@ def _kvo(df):            return {"kvo": _ta().kvo(df.high, df.low, df.close, df.
 
 
 CATALOG += [
+    # Volume gets its own pane, drawn as bars rather than a line.
+    Spec("volume", "Volume", "sub", [],
+         [Line("volume", "Volume", "#64748b", style="histogram")], _volume,
+         note="Indices report no volume on Yahoo, so this stays empty for ^NSEI etc."),
+
     # ---- more overlays ---------------------------------------------------
     Spec("hma", "HMA", "price", [Param("length", 20)],
          [Line("hma", "HMA", "#fb7185")], _hma),
@@ -450,3 +464,120 @@ GUIDES.update({
     "ao": [0],
     "trix": [0],
 })
+
+
+# ==========================================================================
+# The long tail — every other indicator pandas-ta exposes.
+#
+# The curated CATALOG above is what the fx menu shows by default. This builds
+# generic entries for everything else so they can be switched on from Settings.
+# Each is probed once against synthetic data and only kept if it actually
+# returns something: the library has ~193 indicators and not all of them work
+# on every input, so trusting the name list alone would put broken entries in
+# the menu.
+# ==========================================================================
+
+AUTO_COLORS = ["#38bdf8", "#f59e0b", "#4ade80", "#f472b6", "#a78bfa",
+               "#fb923c", "#22d3ee", "#facc15", "#fb7185", "#94a3b8"]
+
+PRICE_CATEGORIES = {"overlap"}          # these draw on the candles; the rest get a band
+
+_auto_cache = None
+
+
+def _probe_frame(n=260):
+    import numpy as np, pandas as pd
+
+    rng = np.random.default_rng(11)
+    close = 100 * np.cumprod(1 + rng.normal(0, 0.012, n))
+    df = pd.DataFrame({
+        "open": close * (1 + rng.normal(0, 0.002, n)),
+        "high": close * (1 + abs(rng.normal(0, 0.006, n))),
+        "low": close * (1 - abs(rng.normal(0, 0.006, n))),
+        "close": close,
+        "volume": rng.integers(1000, 50000, n).astype(float),
+    })
+    df.index = pd.to_datetime(
+        [1700000000 + i * 900 for i in range(n)], unit="s", utc=True)
+    return df
+
+
+def _generic_fn(name):
+    """Call df.ta.<name>(...) and turn whatever comes back into named series."""
+    def fn(df, *args):
+        import pandas as pd
+
+        kwargs = {}
+        if args:
+            kwargs["length"] = int(args[0])
+        try:
+            result = getattr(df.ta, name)(**kwargs)
+        except TypeError:
+            result = getattr(df.ta, name)()        # doesn't take a length
+        if result is None:
+            return {}
+        if isinstance(result, tuple):
+            result = result[0]
+        if isinstance(result, pd.Series):
+            return {name: result}
+        if isinstance(result, pd.DataFrame):
+            return {str(c): result[c] for c in result.columns}
+        return {}
+    return fn
+
+
+def _build_auto():
+    ta = _ta()
+    df = _probe_frame()
+    curated = {s.id for s in CATALOG}
+    specs = []
+
+    for category, names in getattr(ta, "Category", {}).items():
+        pane = "price" if category in PRICE_CATEGORIES else "sub"
+        for name in names:
+            if name in curated or not hasattr(df.ta, name):
+                continue
+            fn = _generic_fn(name)
+            try:
+                produced = fn(df, 14)
+            except Exception:
+                try:
+                    produced = fn(df)
+                except Exception:
+                    continue
+            cols = [k for k, v in (produced or {}).items()
+                    if v is not None and hasattr(v, "dropna") and len(v.dropna()) > 0]
+            if not cols:
+                continue
+            cols = cols[:4]
+            lines = [Line(c, c, AUTO_COLORS[i % len(AUTO_COLORS)]) for i, c in enumerate(cols)]
+            takes_length = False
+            try:
+                takes_length = fn(df, 20) is not None
+            except Exception:
+                pass
+            specs.append(Spec(
+                name, name.upper().replace("_", " "), pane,
+                [Param("length", 14)] if takes_length else [],
+                lines, fn, note=f"{category} · auto-generated wrapper",
+            ))
+    return specs
+
+
+def all_specs():
+    """Curated entries first, then everything else that actually works."""
+    global _auto_cache
+    if _auto_cache is None:
+        try:
+            _auto_cache = _build_auto()
+        except Exception as err:
+            print(f"[indicators] auto-catalog failed: {type(err).__name__}: {err}")
+            _auto_cache = []
+        for s in _auto_cache:
+            if s.id not in BY_ID:
+                BY_ID[s.id] = s
+    return CATALOG + _auto_cache
+
+
+def full_catalog():
+    return [dict(s.describe(), curated=(s in CATALOG)) for s in all_specs()]

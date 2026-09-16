@@ -13,19 +13,32 @@
 
   const LWC = global.LightweightCharts;
 
-  function addCandles(chart, options) {
-    if (typeof chart.addCandlestickSeries === 'function') return chart.addCandlestickSeries(options);
+  /* v5 places a series in a pane via the third argument; v4 had no panes at
+   * all, so on v4 everything lands on the single chart and we fall back to the
+   * stacked-scale layout. */
+  const HAS_PANES = !!(LWC && LWC.CandlestickSeries && LWC.createChart);
+
+  function addCandles(chart, options, paneIndex) {
     if (typeof chart.addSeries === 'function' && LWC.CandlestickSeries) {
-      return chart.addSeries(LWC.CandlestickSeries, options);
+      return chart.addSeries(LWC.CandlestickSeries, options, paneIndex || 0);
     }
+    if (typeof chart.addCandlestickSeries === 'function') return chart.addCandlestickSeries(options);
     throw new Error('Unsupported lightweight-charts build');
   }
 
-  function addLine(chart, options) {
-    if (typeof chart.addLineSeries === 'function') return chart.addLineSeries(options);
+  function addLine(chart, options, paneIndex) {
     if (typeof chart.addSeries === 'function' && LWC.LineSeries) {
-      return chart.addSeries(LWC.LineSeries, options);
+      return chart.addSeries(LWC.LineSeries, options, paneIndex || 0);
     }
+    if (typeof chart.addLineSeries === 'function') return chart.addLineSeries(options);
+    throw new Error('Unsupported lightweight-charts build');
+  }
+
+  function addHistogram(chart, options, paneIndex) {
+    if (typeof chart.addSeries === 'function' && LWC.HistogramSeries) {
+      return chart.addSeries(LWC.HistogramSeries, options, paneIndex || 0);
+    }
+    if (typeof chart.addHistogramSeries === 'function') return chart.addHistogramSeries(options);
     throw new Error('Unsupported lightweight-charts build');
   }
 
@@ -203,7 +216,7 @@
         upColor: '#22c55e', downColor: '#ef4444',
         borderUpColor: '#22c55e', borderDownColor: '#ef4444',
         wickUpColor: '#22c55e', wickDownColor: '#ef4444',
-      });
+      }, 0);
     }
 
     resize() {
@@ -438,10 +451,44 @@
       });
     }
 
+    /* Make the chart have exactly 1 + n panes, and hand back their indices.
+     * Price is always pane 0; each band indicator gets its own pane below,
+     * with its own price axis — which is the point, since RSI is 0-100 and
+     * volume runs to millions. */
+    syncPanes(count) {
+      if (!HAS_PANES || typeof this.chart.panes !== 'function') return null;
+      let panes = this.chart.panes();
+      while (panes.length < count + 1) {
+        this.chart.addPane();
+        panes = this.chart.panes();
+      }
+      while (panes.length > count + 1) {
+        try { this.chart.removePane(panes.length - 1); } catch (_) { break; }
+        panes = this.chart.panes();
+      }
+      // price keeps most of the height; each band gets an equal, smaller slice
+      panes.forEach((pane, i) => {
+        try { pane.setStretchFactor(i === 0 ? Math.max(2.2, 4 - count * 0.6) : 1); } catch (_) {}
+      });
+      return panes;
+    }
+
     drawIndicators() {
       if (!this.chart) return;
       const shift = this.tzShift;
       const wanted = this.indLines;
+
+      /* one pane per band indicator, in the order they were added */
+      const bandGroups = [];
+      for (const line of wanted.values()) {
+        if (line.pane === 'sub' && bandGroups.indexOf(line.group) === -1) {
+          bandGroups.push(line.group);
+        }
+      }
+      const n = bandGroups.length;
+      const paneOf = (line) => (line.pane === 'sub' ? bandGroups.indexOf(line.group) + 1 : 0);
+
+      if (HAS_PANES) this.syncPanes(n);
 
       for (const [key, series] of this.indSeries) {
         if (!wanted.has(key)) {
@@ -450,58 +497,79 @@
         }
       }
 
-      /* Each band indicator gets its own price scale and its own horizontal
-       * slice at the bottom, because their ranges are nothing alike — RSI is
-       * 0-100, OBV runs to millions. Sharing a scale would flatten both. */
-      const bandGroups = [];
-      for (const line of wanted.values()) {
-        if (line.pane === 'sub' && bandGroups.indexOf(line.group) === -1) {
-          bandGroups.push(line.group);
-        }
-      }
-      const n = bandGroups.length;
-      const bandH = n ? Math.min(0.22, 0.62 / n) : 0;
-      const scaleFor = (group) => 'sub' + bandGroups.indexOf(group);
-      const marginsFor = (i) => ({ top: 1 - (n - i) * bandH, bottom: (n - 1 - i) * bandH });
+      /* fallback for v4: stacked scale margins on one pane */
+      const bandH = (!HAS_PANES && n) ? Math.min(0.22, 0.62 / n) : 0;
 
       for (const [key, line] of wanted) {
         const isSub = line.pane === 'sub';
-        const scaleId = isSub ? scaleFor(line.group) : 'right';
-        let series = this.indSeries.get(key);
+        const paneIdx = paneOf(line);
+        const scaleId = HAS_PANES ? 'right' : (isSub ? 'sub' + (paneIdx - 1) : 'right');
+        const isHist = line.style === 'histogram';
+        const want = paneIdx + '|' + scaleId + '|' + (isHist ? 'h' : 'l');
 
-        if (series && series.__scaleId !== scaleId) {
+        let series = this.indSeries.get(key);
+        if (series && series.__slot !== want) {
           try { this.chart.removeSeries(series); } catch (_) {}
           this.indSeries.delete(key);
           series = null;
         }
         if (!series) {
-          series = addLine(this.chart, {
-            color: line.color,
-            lineWidth: line.width || 2,
-            lineStyle: line.style === 'dashed' ? 2 : 0,
+          const opts = {
             priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: false,
+            lastValueVisible: isHist ? false : isSub,
             priceScaleId: scaleId,
-          });
-          series.__scaleId = scaleId;
-          if (isSub) {
-            (line.guides || []).forEach((lvl) => series.createPriceLine({
-              price: lvl, color: 'rgba(139,151,171,.35)', lineWidth: 1,
-              lineStyle: 2, axisLabelVisible: false,
-            }));
+          };
+          if (isHist) {
+            series = addHistogram(this.chart, Object.assign(opts, {
+              color: line.color, priceFormat: { type: 'volume' },
+            }), paneIdx);
+          } else {
+            series = addLine(this.chart, Object.assign(opts, {
+              color: line.color,
+              lineWidth: line.width || 2,
+              lineStyle: line.style === 'dashed' ? 2 : 0,
+              crosshairMarkerVisible: false,
+            }), paneIdx);
           }
+          series.__slot = want;
+          (line.guides || []).forEach((lvl) => {
+            try {
+              series.createPriceLine({
+                price: lvl, color: 'rgba(139,151,171,.35)', lineWidth: 1,
+                lineStyle: 2, axisLabelVisible: false,
+              });
+            } catch (_) {}
+          });
           this.indSeries.set(key, series);
         }
-        series.setData((line.data || []).map((p) => ({ time: p.time + shift, value: p.value })));
+
+        const data = (line.data || []).map((p) => ({ time: p.time + shift, value: p.value }));
+        if (isHist) {
+          /* colour each volume bar by whether that candle closed up */
+          const byTime = new Map(this.candles.map((c) => [c.time + shift, c]));
+          data.forEach((d) => {
+            const c = byTime.get(d.time);
+            d.color = !c ? 'rgba(100,116,139,.6)'
+              : c.close >= c.open ? 'rgba(34,197,94,.55)' : 'rgba(239,68,68,.55)';
+          });
+        }
+        series.setData(data);
+
+        if (!HAS_PANES && isSub) {
+          this.chart.priceScale(scaleId).applyOptions({
+            scaleMargins: {
+              top: 1 - (n - (paneIdx - 1)) * bandH,
+              bottom: (n - paneIdx) * bandH,
+            },
+          });
+        }
       }
 
-      bandGroups.forEach((g, i) => {
-        this.chart.priceScale('sub' + i).applyOptions({ scaleMargins: marginsFor(i) });
-      });
-      this.chart.priceScale('right').applyOptions({
-        scaleMargins: { top: 0.12, bottom: n ? n * bandH + 0.02 : 0.12 },
-      });
+      if (!HAS_PANES) {
+        this.chart.priceScale('right').applyOptions({
+          scaleMargins: { top: 0.12, bottom: n ? n * bandH + 0.02 : 0.12 },
+        });
+      }
       this.btnInd.classList.toggle('on', this.config.indicators.length > 0);
     }
 
@@ -566,7 +634,7 @@
 
           const search = el('input', 'pop-search');
           search.type = 'search';
-          search.placeholder = 'Filter ' + Indicators.catalog.length + ' indicators…';
+          search.placeholder = 'Filter ' + Indicators.menuCatalog().length + ' indicators…';
           host.appendChild(search);
 
           const groups = el('div');
@@ -577,7 +645,7 @@
             groups.innerHTML = '';
             const needle = (q || '').trim().toLowerCase();
             [['price', 'On the chart'], ['sub', 'In a band below']].forEach(([kind, heading]) => {
-              const matches = Indicators.catalog.filter((c) =>
+              const matches = Indicators.menuCatalog().filter((c) =>
                 c.pane === kind &&
                 (!needle || c.label.toLowerCase().includes(needle) || c.id.includes(needle)));
               if (!matches.length) return;
@@ -604,6 +672,11 @@
           };
           renderChips('');
           search.addEventListener('input', () => renderChips(search.value));
+
+          const more = el('button', 'pop-link', 'Add more from Settings →');
+          more.type = 'button';
+          more.addEventListener('click', () => { Popover.close(); Settings.open('indicators'); });
+          host.appendChild(more);
 
           host.appendChild(el('div', 'pop-note',
             'Bands stack, up to ' + Indicators.MAX_BANDS + '. Values come from pandas-ta on the server and '

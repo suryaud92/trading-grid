@@ -7,10 +7,88 @@
     el: null,
     state: null,
 
-    open() {
+    open(focus) {
       this.el = document.getElementById('settings');
       this.el.hidden = false;
       this.refresh();
+      this.renderIndicatorPicker();
+      if (focus === 'indicators') {
+        const card = document.getElementById('ind-card');
+        if (card) setTimeout(() => card.scrollIntoView({ block: 'start', behavior: 'smooth' }), 60);
+      }
+    },
+
+    /* ---------------------------------------------------------------------
+     * Which indicators the fx menu offers. Stored per browser, not on the
+     * server — it is a display preference, not a credential.
+     * ------------------------------------------------------------------- */
+    async renderIndicatorPicker() {
+      const list = document.getElementById('ind-list');
+      if (!list) return;
+      try {
+        await Indicators.load();
+      } catch (err) {
+        list.textContent = 'Could not load the indicator list: ' + err.message;
+        return;
+      }
+      this.drawIndicatorList();
+    },
+
+    drawIndicatorList(query) {
+      const list = document.getElementById('ind-list');
+      const needle = (query || '').trim().toLowerCase();
+      const chosen = Indicators.favourites || [];
+      document.getElementById('ind-count').textContent =
+        chosen.length + ' of ' + Indicators.catalog.length + ' shown';
+
+      const matches = Indicators.catalog.filter((s) =>
+        !needle || s.id.includes(needle) || s.label.toLowerCase().includes(needle)
+        || (s.note || '').toLowerCase().includes(needle));
+
+      list.innerHTML = '';
+      if (!matches.length) {
+        const empty = document.createElement('div');
+        empty.className = 'pop-empty';
+        empty.textContent = 'Nothing matches "' + query + '".';
+        list.appendChild(empty);
+        return;
+      }
+
+      [['price', 'Drawn on the chart'], ['sub', 'Drawn in a band below']].forEach(([kind, heading]) => {
+        const group = matches.filter((s) => s.pane === kind);
+        if (!group.length) return;
+        const h = document.createElement('div');
+        h.className = 'pop-sub';
+        h.textContent = heading + ' (' + group.length + ')';
+        list.appendChild(h);
+
+        group.forEach((s) => {
+          const row = document.createElement('label');
+          row.className = 'ind-row' + (s.curated ? ' curated' : '');
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = Indicators.isFavourite(s.id);
+          cb.addEventListener('change', () => {
+            const next = (Indicators.favourites || []).slice();
+            const at = next.indexOf(s.id);
+            if (cb.checked && at === -1) next.push(s.id);
+            if (!cb.checked && at !== -1) next.splice(at, 1);
+            Indicators.saveFavourites(next);
+            this.drawIndicatorList(document.getElementById('ind-search').value);
+          });
+          const dot = document.createElement('span');
+          dot.className = 'pop-swatch';
+          dot.style.background = (s.lines[0] && s.lines[0].color) || '#64748b';
+          const name = document.createElement('span');
+          name.className = 'ind-name';
+          name.textContent = s.label;
+          const note = document.createElement('span');
+          note.className = 'ind-note';
+          note.textContent = s.note || '';
+          row.append(cb, dot, name, note);
+          list.appendChild(row);
+        });
+      });
     },
 
     close() {
@@ -142,6 +220,19 @@
       document.getElementById('kite-login').addEventListener('click', () => this.openKiteLogin());
       document.getElementById('kite-connect').addEventListener('click', () => this.connect());
       document.getElementById('kite-disconnect').addEventListener('click', () => this.disconnect());
+
+      const search = document.getElementById('ind-search');
+      if (search) {
+        search.addEventListener('input', () => this.drawIndicatorList(search.value));
+      }
+      const reset = document.getElementById('ind-reset');
+      if (reset) {
+        reset.addEventListener('click', () => {
+          Indicators.resetFavourites();
+          document.getElementById('ind-search').value = '';
+          this.drawIndicatorList('');
+        });
+      }
     },
   };
 

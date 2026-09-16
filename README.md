@@ -44,13 +44,28 @@ Click **fx** on any pane. Fourteen indicators, computed server-side with
 | SMA, EMA, WMA, HMA, DEMA, TEMA, ALMA, VWMA, Bollinger, Keltner, Donchian, Supertrend, VWAP, Parabolic SAR, Ichimoku | RSI, Stoch RSI, MACD, Stochastic, ATR, NATR, ADX, CCI, MFI, OBV, CMF, Klinger, Aroon, Williams %R, ROC, TRIX, Choppiness, Z-Score, Awesome Osc, Ultimate Osc |
 
 Add as many overlays as you like — the same one twice with different periods is
-fine, so SMA 20 and SMA 50 sit together — and **up to three bands**, which stack
-vertically. Each band gets its own price scale, because their ranges are nothing
-alike: RSI is 0-100 while OBV runs to millions, and sharing a scale would
-flatten both. Three is the cap because a fourth is unreadable in a grid pane.
+fine, so SMA 20 and SMA 50 sit together — and **up to three band indicators**,
+each of which gets **its own pane** below the price, with its own price axis and
+a divider, the way TradingView does it. That needs real panes, which arrived in
+lightweight-charts v5 (`addSeries(Type, opts, paneIndex)`); the code still falls
+back to stacked scale margins if it ever runs against v4.
 
-The library actually exposes **193** indicators; the catalog is a curated subset.
-Adding another is one `Spec(...)` entry in `indicators.py`.
+**Volume** is in the list too, drawn as bars coloured by whether the candle
+closed up. Yahoo reports no volume for indices, so it stays empty for `^NSEI`
+and friends — the pane simply does not appear rather than showing a flat line.
+
+### The full catalog, and the fx menu
+
+`/api/indicators` returns **194** indicators: 36 hand-curated plus 158 generated
+by wrapping the rest of pandas-ta. Each generated one is probed once against
+synthetic data at startup and only kept if it actually returns something — the
+library lists ~193 names and not all of them work on every input, so trusting
+the name list alone would put broken entries in the menu.
+
+The **fx menu shows only your chosen subset** (the 36 curated ones by default),
+so it stays short. **Settings → Indicator menu** lists all 194 with a search box;
+tick any to add it to fx. That choice lives in `localStorage` — it is a display
+preference, not a credential. "Reset to defaults" puts it back.
 
 `pandas-ta-classic` is used rather than `pandas-ta`: the original now depends on
 numba, which has no Python 3.14 wheels and cannot be installed on current

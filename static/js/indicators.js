@@ -13,9 +13,12 @@
 (function (global) {
   'use strict';
 
+  const FAV_KEY = 'ltg.fxmenu.v1';
+
   const Indicators = {
-    catalog: [],
+    catalog: [],          // everything the server offers (~194)
     byId: {},
+    favourites: null,     // ids shown in the fx menu; null = the curated default
     loaded: false,
 
     async load() {
@@ -24,8 +27,42 @@
       this.catalog = indicators || [];
       this.byId = {};
       this.catalog.forEach((s) => { this.byId[s.id] = s; });
+      this.loadFavourites();
       this.loaded = true;
       return this.catalog;
+    },
+
+    /* ---- which indicators the fx menu offers -------------------------- */
+
+    loadFavourites() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(FAV_KEY) || 'null');
+        if (Array.isArray(raw)) this.favourites = raw.filter((id) => this.byId[id]);
+      } catch (_) {}
+      if (!this.favourites || !this.favourites.length) this.favourites = this.defaultFavourites();
+      return this.favourites;
+    },
+
+    defaultFavourites() {
+      return this.catalog.filter((s) => s.curated).map((s) => s.id);
+    },
+
+    saveFavourites(ids) {
+      this.favourites = (ids || []).filter((id) => this.byId[id]);
+      try { localStorage.setItem(FAV_KEY, JSON.stringify(this.favourites)); } catch (_) {}
+    },
+
+    resetFavourites() {
+      try { localStorage.removeItem(FAV_KEY); } catch (_) {}
+      this.favourites = this.defaultFavourites();
+    },
+
+    isFavourite(id) { return (this.favourites || []).indexOf(id) !== -1; },
+
+    /** What the fx menu lists. */
+    menuCatalog() {
+      const fav = this.favourites || [];
+      return this.catalog.filter((s) => fav.indexOf(s.id) !== -1);
     },
 
     spec(list) {
