@@ -205,7 +205,8 @@ def on_error(exc):
 def _boot_banner(port):
     print(f"\n  Trading dashboard  ->  http://127.0.0.1:{port}")
     if auth.enabled():
-        print(f"  Auth: ON  — only {auth.SUPERADMIN_EMAIL} may sign in")
+        allowed = ", ".join(sorted(auth.SUPERADMIN_EMAILS))
+        print(f"  Auth: ON  — {len(auth.SUPERADMIN_EMAILS)} account(s) may sign in: {allowed}")
     else:
         print("  Auth: OFF — anyone who can reach this port has full access.")
         print("        Set FIREBASE_PROJECT_ID and SUPERADMIN_EMAIL before exposing it.")

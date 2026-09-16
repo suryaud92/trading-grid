@@ -8,7 +8,7 @@ token's signature against Google's public keys and checks three things:
     * signed by Google, not expired
     * `aud` / `iss` match YOUR Firebase project (so a token minted for some
       other project is rejected)
-    * email == SUPERADMIN_EMAIL, and email_verified
+    * email is in SUPERADMIN_EMAIL (one address, or a comma-separated list)
 
 Verifying server-side is the part that matters. Hiding the UI in JavaScript
 stops nobody — anyone can read a static bundle and call the API directly, so
@@ -16,8 +16,11 @@ the API is what has to say no.
 
 Config (env):
     FIREBASE_PROJECT_ID=my-project
-    SUPERADMIN_EMAIL=you@gmail.com
+    SUPERADMIN_EMAIL=you@gmail.com            one address, or several:
+    SUPERADMIN_EMAIL=you@gmail.com,partner@gmail.com
     FIREBASE_WEB_CONFIG={"apiKey":"...","authDomain":"...","projectId":"..."}
+
+Everyone listed gets the same access, including the Settings screen.
 
 Leave FIREBASE_PROJECT_ID unset and auth is OFF — the app runs open, which is
 what you want on localhost. It refuses to start open if PUBLIC=1 is not set
@@ -40,7 +43,14 @@ CERT_URL = ("https://www.googleapis.com/robot/v1/metadata/x509/"
             "securetoken@system.gserviceaccount.com")
 
 PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "").strip()
-SUPERADMIN_EMAIL = os.environ.get("SUPERADMIN_EMAIL", "").strip().lower()
+
+# One address or a comma-separated list. Commas, semicolons and stray spaces
+# are all tolerated so a copy-pasted list doesn't lock you out.
+SUPERADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get("SUPERADMIN_EMAIL", "").replace(";", ",").split(",")
+    if e.strip()
+}
 
 _certs: dict = {}
 _certs_at = 0.0
@@ -48,7 +58,7 @@ _certs_lock = threading.Lock()
 
 
 def enabled() -> bool:
-    return bool(PROJECT_ID and SUPERADMIN_EMAIL)
+    return bool(PROJECT_ID and SUPERADMIN_EMAILS)
 
 
 def web_config() -> dict:
@@ -108,8 +118,8 @@ def verify_token(id_token: str) -> dict:
         raise ValueError("token carries no email")
     if not claims.get("email_verified"):
         raise ValueError("email is not verified")
-    if email != SUPERADMIN_EMAIL:
-        raise ValueError(f"{email} is not the superadmin for this app")
+    if email not in SUPERADMIN_EMAILS:
+        raise ValueError(f"{email} is not authorised for this app")
     return claims
 
 
