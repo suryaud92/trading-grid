@@ -173,6 +173,9 @@ _cache: dict = {}
 _cache_lock = threading.Lock()
 
 
+CACHE_MAX_ENTRIES = 300
+
+
 def cached(ttl: float, key: str, producer: Callable):
     now = time.time()
     with _cache_lock:
@@ -182,6 +185,11 @@ def cached(ttl: float, key: str, producer: Callable):
     value = producer()
     with _cache_lock:
         _cache[key] = (now, value)
+        # Browsing a lot of symbols would otherwise grow this forever: each
+        # entry is ~1200 candles. Drop the oldest once it gets big.
+        if len(_cache) > CACHE_MAX_ENTRIES:
+            for stale in sorted(_cache, key=lambda k: _cache[k][0])[:len(_cache) // 3]:
+                del _cache[stale]
     return value
 
 

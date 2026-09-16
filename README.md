@@ -256,6 +256,32 @@ token expires around 6am IST daily, so you reconnect each morning either way.
 Change `APP_URL` in that file if your Render URL changes. GitHub disables
 scheduled workflows after 60 days of repo inactivity; any commit re-enables it.
 
+### Staying inside the free tier
+
+Measured, not estimated:
+
+| | |
+|---|---|
+| Memory | ~150 MB peak with a full 8-symbol grid, against **512 MB** |
+| CPU | a full 8-pane refresh cycle completes in ~6 ms locally, against a 4 s budget |
+| Bandwidth | ~1.0 GB/month on yfinance, ~3.2 GB on Zerodha at 4 s, against **5 GB** |
+| Instance hours | ~182 of **750**, thanks to the market-hours-only pinger |
+| GitHub Actions | free — Actions minutes are unlimited on public repos |
+
+Two things keep bandwidth down. Routine refreshes fetch three bars and merge
+them rather than re-pulling 600. And Volume Profile / FVG — by far the biggest
+part of the payload — ride along only on a full reload and every tenth top-up,
+since a profile over 1200 bars does not meaningfully change in four seconds.
+Without that throttle, eight panes with overlays at the Zerodha rate came to
+5.19 GB/month, just over the line.
+
+**Polling faster than the current rates is not free.** One-second refreshes
+would be ~12 GB/month. If you want that, the instance needs upgrading.
+
+Exceeding a limit with no payment method on file causes Render to **suspend**
+free services for the rest of the month — it cannot bill you. Adding a card is
+what changes that.
+
 ### Bandwidth
 
 The routine candle refresh asks for ~10 bars and merges them in, rather than

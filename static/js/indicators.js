@@ -65,11 +65,17 @@
       return this.catalog.filter((s) => fav.indexOf(s.id) !== -1);
     },
 
-    spec(list) {
+    /** includeOverlays=false leaves Volume Profile / FVG out of the request. */
+    spec(list, includeOverlays) {
       return (list || [])
         .filter((e) => this.byId[e.id])
+        .filter((e) => includeOverlays !== false || !this.isOverlay(e.id))
         .map((e) => [e.id].concat(e.params || []).join(':'))
         .join(',');
+    },
+
+    hasOverlay(list) {
+      return (list || []).some((e) => this.isOverlay(e.id));
     },
 
     /** Defaults for a freshly added indicator. */

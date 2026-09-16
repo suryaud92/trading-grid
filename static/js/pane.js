@@ -363,10 +363,15 @@
      * used when the tab comes back into view. */
     async refreshHistory(full) {
       const token = this.reqToken;
+      /* Volume Profile and FVG describe the whole window, so they barely move
+       * between two four-second polls — but they are the biggest thing in the
+       * payload. Ask for them on a full reload and every tenth top-up only. */
+      this._tick = (this._tick || 0) + 1;
+      const withOverlays = !!full || this._tick % 10 === 0;
       try {
         const res = await Feeds.api.candles(
           this.config.source, this.config.symbol, this.config.timeframe, full ? 600 : 3,
-          Indicators.spec(this.config.indicators)
+          Indicators.spec(this.config.indicators, withOverlays)
         );
         if (token !== this.reqToken || !res.candles || !res.candles.length) return;
 
@@ -383,7 +388,7 @@
         this.series.setData(this.chartData());
         this.mergeIndicators(res.indicators || [], full);
         this.drawIndicators();
-        this.drawOverlays(res.overlays || []);
+        if (withOverlays) this.drawOverlays(res.overlays || []);
         const last = this.candles[this.candles.length - 1];
         this.lastBar = Object.assign({}, last);
         this.refPrice = this.computeReference(this.candles);
