@@ -4,7 +4,7 @@
   'use strict';
 
   const COUNTS = [1, 2, 4, 6, 8];
-  const STORE_KEY = 'ltg.state.v2';
+  const STORE_KEY = 'ltg.state.v3';
   const MAX_PANES = 8;
 
   const App = {
@@ -72,6 +72,7 @@
           source: src.key,
           symbol: known ? symbol : src.defaultSymbol,
           timeframe: src.defaultTimeframe,
+          indicators: {},
         };
       });
     },
@@ -88,6 +89,11 @@
           symbol: saved.symbol || src.defaultSymbol,
           timeframe: src.timeframes.some((t) => t.id === saved.timeframe)
             ? saved.timeframe : src.defaultTimeframe,
+          // keep only indicators the catalog still knows about
+          indicators: Object.fromEntries(
+            Object.entries(saved.indicators || {})
+              .filter(([id]) => Indicators.CATALOG.some((c) => c.id === id))
+          ),
         });
       }
       this.state.configs = out;
@@ -204,6 +210,7 @@
         if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
         const settings = document.getElementById('settings');
         if (settings && !settings.hidden) return;
+        if (global.Popover && Popover.isOpen()) return;
         const n = parseInt(e.key, 10);
         if (COUNTS.indexOf(n) !== -1) this.setCount(n);
       });

@@ -170,7 +170,21 @@ body {
 }
 .pane-head select:hover  { border-color: #32405a; }
 .pane-head select:focus  { outline: none; border-color: var(--accent); }
-.pane-head .sel-symbol   { flex: 1 1 auto; min-width: 58px; font-weight: 600; }
+.pane-head .sel-symbol {
+  flex: 1 1 auto;
+  min-width: 52px;
+  font-weight: 600;
+  appearance: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 7px;
+  text-overflow: ellipsis;
+}
+.pane-head .sel-symbol:hover { border-color: #32405a; }
+.pane-head .sel-symbol:focus { outline: none; border-color: var(--accent); }
 .pane-head .sel-source   { flex: 0 1 auto; max-width: 104px; color: var(--text-dim); }
 .pane-head .sel-tf       { flex: 0 0 auto; width: 62px; }
 
@@ -455,4 +469,166 @@ body {
   .modal { padding: 0; }
   .modal-card { border-radius: 0; border: 0; min-height: 100%; }
   .field-row .btn { width: 100%; }
+}
+
+/* ==================================== pane header buttons (ƒx, alerts) */
+.pane-btn {
+  flex: 0 0 auto;
+  position: relative;
+  appearance: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 6px;
+  cursor: pointer;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.pane-btn:hover { color: var(--text); border-color: #32405a; }
+.pane-btn.on { color: var(--accent); border-color: rgba(79,140,255,.5); background: rgba(79,140,255,.1); }
+.pane-btn.hit { color: var(--down); border-color: rgba(239,68,68,.5); background: var(--down-soft); }
+.pane-btn[data-count]:not([data-count=""])::after {
+  content: attr(data-count);
+  position: absolute; top: -5px; right: -5px;
+  min-width: 13px; height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent); color: #fff;
+  font-size: 9px; font-weight: 700; line-height: 13px;
+}
+
+/* ================================================= combobox suggestions */
+.cbx-list {
+  position: fixed;
+  z-index: 60;
+  overflow-y: auto;
+  background: var(--bg-head);
+  border: 1px solid #32405a;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .55);
+  padding: 4px;
+}
+.cbx-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.cbx-row.on, .cbx-row:hover { background: var(--accent); }
+.cbx-row.on .cbx-label, .cbx-row:hover .cbx-label { color: rgba(255,255,255,.8); }
+.cbx-row.on .cbx-sym, .cbx-row:hover .cbx-sym { color: #fff; }
+.cbx-sym { font-weight: 650; color: var(--text); white-space: nowrap; }
+.cbx-label {
+  color: var(--text-dim); font-size: 11px;
+  margin-left: auto; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cbx-row.custom { border-top: 1px solid var(--line); margin-top: 3px; padding-top: 7px; }
+
+/* ============================================================= popover */
+.pop {
+  position: fixed;
+  z-index: 60;
+  width: 272px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--bg-head);
+  border: 1px solid #32405a;
+  border-radius: 10px;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, .6);
+  padding: 10px;
+}
+.pop-title {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-dim);
+  padding: 2px 2px 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pop-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 3px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pop-row input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+.pop-swatch { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+.pop-name { flex: 1 1 auto; }
+.pop-fields { display: flex; gap: 4px; }
+.pop-num {
+  width: 48px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit; font-size: 11.5px;
+  padding: 3px 5px;
+}
+.pop-num.wide { width: auto; flex: 1 1 auto; min-width: 0; }
+.pop-num:focus { outline: none; border-color: var(--accent); }
+.pop-foot { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
+.btn.small { padding: 5px 10px; font-size: 11.5px; }
+
+.pop-empty { color: var(--text-dim); font-size: 11.5px; padding: 2px 3px 8px; }
+.pop-alert {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 3px;
+  font-size: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.pop-alert.done { opacity: .55; text-decoration: line-through; }
+.pop-state { margin-left: auto; color: var(--text-dim); font-size: 10.5px; white-space: nowrap; }
+.pop-alert.done .pop-state { color: var(--down); text-decoration: none; }
+.pop-x {
+  appearance: none; background: none; border: 0;
+  color: var(--text-dim); cursor: pointer; font-size: 11px; padding: 2px 3px;
+}
+.pop-x:hover { color: var(--down); }
+.pop-addalert {
+  display: flex; gap: 5px; align-items: center;
+  border-top: 1px solid var(--line); margin-top: 8px; padding-top: 9px;
+}
+.pop-dir {
+  appearance: none;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+  color: var(--text); font: inherit; font-size: 11.5px; padding: 4px 6px;
+}
+.pop-note { color: var(--text-dim); font-size: 10.5px; line-height: 1.5; margin-top: 9px; }
+
+/* ============================================================== toasts */
+#toasts {
+  position: fixed;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 95;
+  display: flex; flex-direction: column; gap: 8px;
+  max-width: min(330px, calc(100vw - 24px));
+}
+.toast {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 11px 12px;
+  border-radius: 9px;
+  background: var(--bg-head);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--text-dim);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+  animation: toast-in .25s ease-out;
+}
+.toast.above { border-left-color: var(--up); }
+.toast.below { border-left-color: var(--down); }
+.toast strong { font-size: 12.5px; font-weight: 650; }
+.toast span { color: var(--text-dim); font-size: 11.5px; margin-left: auto; white-space: nowrap; }
+.toast button {
+  appearance: none; background: none; border: 0;
+  color: var(--text-dim); cursor: pointer; font-size: 11px; padding: 0 0 0 4px;
+}
+.toast.out { animation: toast-out .4s forwards; }
+@keyframes toast-in  { from { opacity: 0; transform: translateY(8px); } }
+@keyframes toast-out { to   { opacity: 0; transform: translateX(16px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast, .toast.out { animation: none; }
 }

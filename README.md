@@ -25,10 +25,36 @@ says so out loud. Never expose that configuration to the internet.
 | | |
 |---|---|
 | **Charts 1 / 2 / 4 / 6 / 8** | 1 = full screen, 2 = side by side, 4 = 2×2, 6 = 3×2, 8 = 4×2. Also bound to the number keys. |
-| **Per-pane dropdowns** | Symbol · timeframe · source, independent per pane. The timeframe list re-populates from whatever that source supports. |
-| **＋ Custom symbol…** | Last entry in the symbol dropdown — any ticker the source understands (`TATAPOWER.NS`, `NSE:TATAPOWER`). Remembered. |
+| **Symbol search** | Type in the symbol box and matches appear as you go, by ticker *or* company name ("tata" finds Tata Steel, Tata Motors and TCS). Anything not in the list can be entered as typed and is remembered. |
+| **Timeframes** | `1m 5m 15m 30m 1h 1D 1W 1MO` (Kite adds `3m` and `10m`), independent per pane. |
+| **ƒx Indicators** | SMA ×2, EMA, Bollinger Bands and RSI, with editable periods. RSI gets its own band under the price with 30/70 guides. Saved per pane. |
+| **🔔 Alerts** | Price alerts above/below a level. Fires a toast, a chime and a desktop notification. |
 | **Ticker bar** | Flashes green on an uptick, red on a downtick. |
 | **⚙ Settings** | Connect/disconnect Zerodha. |
+
+### Indicators
+
+Click **ƒx** on any pane. Each row has a checkbox and its period(s), so SMA can
+be 20 and 50 at once, Bollinger takes a period and a multiplier. Everything is
+computed in the browser from the candles already on screen — no extra requests.
+The maths is in `static/js/indicators.js` and is unit-tested (RSI is Wilder's,
+checked against an independent implementation).
+
+### Alerts
+
+Alerts fire on a **crossing**, not on the condition merely being true: setting
+"above 100" while the price is already 105 does not fire instantly. It arms
+when the price falls back below and fires on the way up. Each fires once.
+
+They are checked **in the browser**, so they only work while the dashboard is
+open in a tab. Nothing will reach you overnight or with the laptop shut — that
+would need a server-side watcher, which this does not have.
+
+### What the change percentage means
+
+Intraday timeframes show the change **since the previous session's close**
+("change today"). Daily, weekly and monthly show the change within the current
+bar — this day, this week, this month.
 
 Layout, every pane's config and your custom tickers persist in `localStorage`.
 
@@ -198,3 +224,9 @@ Dockerfile / Procfile / render.yaml / firebase.json
   run fully offline, drop the standalone file into `static/js/` and repoint the
   `<script>` tag.
 * Market data only. No order placement anywhere in this code.
+
+## Deliberately not included
+
+* **No trading.** It cannot place, change or cancel orders — market data only.
+* **No drawing tools** (trendlines, fibs).
+* **No server-side alerting.** See the alerts note above.

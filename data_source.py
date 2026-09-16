@@ -191,6 +191,47 @@ def cache_drop(prefix: str) -> None:
             del _cache[k]
 
 
+def resample_candles(rows, period, tz_offset_min=0):
+    """Roll daily candles up into weekly or monthly ones.
+
+    Several brokers (Kite among them) only serve intraday and daily bars, so
+    anything longer has to be built here. Grouping uses the exchange's local
+    date, not UTC, or a Monday bar can land in the previous week.
+
+    period: "week" (ISO week, Monday-start) or "month".
+    """
+    from datetime import datetime, timedelta, timezone
+
+    if period not in ("week", "month"):
+        raise ValueError(f"cannot resample to '{period}'")
+
+    tz = timezone(timedelta(minutes=tz_offset_min))
+    buckets = {}
+    order = []
+    for r in rows:
+        local = datetime.fromtimestamp(r["time"], tz)
+        if period == "week":
+            iso = local.isocalendar()
+            key = (iso[0], iso[1])
+        else:
+            key = (local.year, local.month)
+        b = buckets.get(key)
+        if b is None:
+            buckets[key] = {
+                "time": r["time"],          # first bar of the period
+                "open": r["open"], "high": r["high"],
+                "low": r["low"], "close": r["close"],
+                "volume": r.get("volume") or 0,
+            }
+            order.append(key)
+        else:
+            b["high"] = max(b["high"], r["high"])
+            b["low"] = min(b["low"], r["low"])
+            b["close"] = r["close"]          # rows arrive ascending
+            b["volume"] += r.get("volume") or 0
+    return [buckets[k] for k in order]
+
+
 # ==========================================================================
 # SOURCE 1 — yfinance (Indian equities / indices, and anything else on Yahoo).
 # Free and always available. Delayed, and Yahoo is unofficial.
@@ -198,9 +239,10 @@ def cache_drop(prefix: str) -> None:
 
 YF_PERIOD = {
     "1m": "5d", "2m": "5d", "5m": "1mo", "15m": "1mo",
-    "30m": "2mo", "60m": "6mo", "1d": "2y", "1wk": "5y",
+    "30m": "2mo", "60m": "6mo", "1d": "2y", "1wk": "10y", "1mo": "max",
 }
-YF_INTERVAL = {"1h": "60m", "1w": "1wk"}
+# our timeframe id -> yahoo's. Note "1m" is a minute and "1M" is a month.
+YF_INTERVAL = {"1h": "60m", "1w": "1wk", "1M": "1mo"}
 
 
 def _yf():
@@ -232,7 +274,7 @@ def yfinance_candles(symbol, timeframe, limit):
             })
         return rows
 
-    ttl = 20.0 if interval.endswith("m") else 300.0
+    ttl = 20.0 if interval in ("1m", "2m", "5m", "15m", "30m", "60m") else 300.0
     rows = cached(ttl, f"yf:c:{symbol}:{interval}:{period}", fetch)
     if not rows:
         raise ValueError(f"no data from yfinance for '{symbol}' @ {timeframe}")
@@ -323,7 +365,12 @@ NSE_SYMBOLS = [
 register_source(
     key="yfinance",
     label="yfinance (NSE / BSE)",
-    timeframes=["1m", "5m", "15m", "30m", "1h", "1d"],
+    timeframes=[
+        {"id": "1m", "label": "1m"}, {"id": "5m", "label": "5m"},
+        {"id": "15m", "label": "15m"}, {"id": "30m", "label": "30m"},
+        {"id": "1h", "label": "1h"}, {"id": "1d", "label": "1D"},
+        {"id": "1w", "label": "1W"}, {"id": "1M", "label": "1MO"},
+    ],
     symbols=NSE_SYMBOLS,
     candles=yfinance_candles,
     quotes=yfinance_quotes,
@@ -421,6 +468,14 @@ def _kite_token(symbol):
 
 def kite_candles(symbol, timeframe, limit):
     from datetime import datetime, timedelta
+
+    # Kite serves nothing longer than a daily bar, so weekly and monthly are
+    # rolled up here from dailies.
+    rollup = {"1w": "week", "1M": "month"}.get(timeframe)
+    if rollup:
+        days = {"week": 7, "month": 31}[rollup]
+        daily = kite_candles(symbol, "1d", min(limit * days, 2000))
+        return resample_candles(daily, rollup, tz_offset_min=330)
 
     interval = KITE_TF.get(timeframe)
     if not interval:
@@ -571,7 +626,13 @@ def configure_zerodha() -> bool:
     register_source(
         key="zerodha",
         label="Zerodha (Kite)",
-        timeframes=["1m", "3m", "5m", "10m", "15m", "30m", "1h", "1d"],
+        timeframes=[
+            {"id": "1m", "label": "1m"}, {"id": "3m", "label": "3m"},
+            {"id": "5m", "label": "5m"}, {"id": "10m", "label": "10m"},
+            {"id": "15m", "label": "15m"}, {"id": "30m", "label": "30m"},
+            {"id": "1h", "label": "1h"}, {"id": "1d", "label": "1D"},
+            {"id": "1w", "label": "1W"}, {"id": "1M", "label": "1MO"},
+        ],
         symbols=_kite_symbol_list(),
         candles=kite_candles,
         quotes=kite_quotes,

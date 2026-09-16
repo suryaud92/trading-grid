@@ -1,15 +1,18 @@
-/* pane.js — one chart pane: header dropdowns + flashing ticker + candles. */
+/* pane.js — one chart pane: symbol search, timeframe, indicators, alerts,
+ * flashing ticker, candles. */
 (function (global) {
   'use strict';
 
   const TF_SECONDS = {
-    '1m': 60, '2m': 120, '5m': 300, '15m': 900, '30m': 1800,
-    '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400, '1w': 604800,
+    '1m': 60, '2m': 120, '3m': 180, '5m': 300, '10m': 600, '15m': 900,
+    '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400,
   };
+  /* Weeks and months have no fixed length, so live ticks fold into the
+   * current bar and the periodic history refresh starts the next one. */
+  const LONG_TF = { '1w': true, '1M': true };
 
   const LWC = global.LightweightCharts;
 
-  /* v4 (addCandlestickSeries) and v5 (addSeries + CandlestickSeries) both work */
   function addCandles(chart, options) {
     if (typeof chart.addCandlestickSeries === 'function') return chart.addCandlestickSeries(options);
     if (typeof chart.addSeries === 'function' && LWC.CandlestickSeries) {
@@ -18,9 +21,16 @@
     throw new Error('Unsupported lightweight-charts build');
   }
 
+  function addLine(chart, options) {
+    if (typeof chart.addLineSeries === 'function') return chart.addLineSeries(options);
+    if (typeof chart.addSeries === 'function' && LWC.LineSeries) {
+      return chart.addSeries(LWC.LineSeries, options);
+    }
+    throw new Error('Unsupported lightweight-charts build');
+  }
+
   function decimalsFor(price) {
     const p = Math.abs(price || 0);
-    if (p >= 1000) return 2;
     if (p >= 10) return 2;
     if (p >= 1) return 4;
     if (p >= 0.01) return 5;
@@ -37,13 +47,16 @@
   class Pane {
     constructor(index, config, ctx) {
       this.index = index;
-      this.config = Object.assign({}, config);
-      this.ctx = ctx;                 // {sources: {...}, onChange(index, config)}
+      this.config = Object.assign({ indicators: {} }, config);
+      this.config.indicators = Object.assign({}, this.config.indicators);
+      this.ctx = ctx;
       this.unsubLive = null;
       this.refreshTimer = null;
       this.lastPrice = null;
       this.refPrice = null;
       this.lastBar = null;
+      this.candles = [];
+      this.indSeries = new Map();
       this.decimals = 2;
       this.reqToken = 0;
       this.build();
@@ -51,35 +64,47 @@
 
     get source() { return this.ctx.sources[this.config.source] || Object.values(this.ctx.sources)[0]; }
     get tfSeconds() { return TF_SECONDS[this.config.timeframe] || 60; }
+    get isLongTf() { return !!LONG_TF[this.config.timeframe]; }
     get tzShift() { return (this.source.tzOffsetMin || 0) * 60; }
+    get symbolLabel() {
+      const hit = this.ctx.symbolsFor(this.source.key).find((s) => s.symbol === this.config.symbol);
+      return (hit && hit.label) || this.config.symbol;
+    }
 
     /* ------------------------------------------------------------ DOM */
     build() {
       const root = el('section', 'pane');
       root.dataset.index = String(this.index);
 
-      /* header */
       const head = el('div', 'pane-head');
       head.appendChild(el('span', 'pane-idx', String(this.index + 1)));
 
-      this.selSymbol = el('select', 'sel-symbol');
-      this.selSymbol.title = 'Symbol';
+      this.symbolInput = el('input', 'sel-symbol');
+      this.symbolInput.type = 'text';
+      this.symbolInput.title = 'Type to search symbols';
+      this.symbolInput.value = this.config.symbol;
+
       this.selTf = el('select', 'sel-tf');
       this.selTf.title = 'Timeframe';
       this.selSource = el('select', 'sel-source');
       this.selSource.title = 'Data source';
 
-      head.append(this.selSymbol, this.selTf, this.selSource);
+      this.btnInd = el('button', 'pane-btn', 'ƒx');
+      this.btnInd.type = 'button';
+      this.btnInd.title = 'Indicators';
+      this.btnAlert = el('button', 'pane-btn', '🔔');
+      this.btnAlert.type = 'button';
+      this.btnAlert.title = 'Price alerts';
 
-      /* ticker */
+      head.append(this.symbolInput, this.selTf, this.selSource, this.btnInd, this.btnAlert);
+
       this.ticker = el('div', 'ticker');
       this.tSym = el('span', 't-sym', '—');
       this.tChg = el('span', 't-chg', '—');
       this.tPrice = el('span', 't-price', '—');
-      this.tChg.title = 'Change vs. the first bar in this window';
+      this.tChg.title = 'Change';
       this.ticker.append(this.tSym, this.tChg, this.tPrice);
 
-      /* chart */
       const body = el('div', 'pane-body');
       this.chartEl = el('div', 'chart');
       this.msgEl = el('div', 'pane-msg', 'Loading…');
@@ -90,26 +115,28 @@
 
       this.fillSources();
       this.fillTimeframes();
-      this.fillSymbols();
+
+      Combobox.attach(this.symbolInput, {
+        items: () => this.ctx.symbolsFor(this.source.key),
+        current: () => this.config.symbol,
+        onPick: (symbol) => {
+          if (!this.ctx.symbolsFor(this.source.key).some((s) => s.symbol === symbol)) {
+            this.ctx.addCustomSymbol(this.source.key, symbol);
+          }
+          this.apply({ symbol: symbol });
+        },
+      });
 
       this.selSource.addEventListener('change', () => {
         const src = this.ctx.sources[this.selSource.value];
         this.apply({ source: src.key, symbol: src.defaultSymbol, timeframe: src.defaultTimeframe });
       });
       this.selTf.addEventListener('change', () => this.apply({ timeframe: this.selTf.value }));
-      this.selSymbol.addEventListener('change', () => {
-        if (this.selSymbol.value === '__custom__') {
-          const typed = (prompt('Symbol (exactly as the source expects it, e.g. TATAPOWER.NS or ARB):', '') || '').trim();
-          this.selSymbol.value = this.config.symbol;
-          if (!typed) return;
-          const sym = typed.toUpperCase();
-          this.ctx.addCustomSymbol(this.source.key, sym);
-          this.fillSymbols();
-          this.apply({ symbol: sym });
-          return;
-        }
-        this.apply({ symbol: this.selSymbol.value });
-      });
+      this.btnInd.addEventListener('click', () => this.openIndicatorMenu());
+      this.btnAlert.addEventListener('click', () => this.openAlertMenu());
+
+      this.offAlerts = Alerts.onChange(() => this.paintAlertBadge());
+      this.paintAlertBadge();
     }
 
     fillSources() {
@@ -136,23 +163,7 @@
       this.selTf.value = this.config.timeframe;
     }
 
-    fillSymbols() {
-      const src = this.source;
-      const list = this.ctx.symbolsFor(src.key).slice();
-      if (!list.some((s) => s.symbol === this.config.symbol)) {
-        list.unshift({ symbol: this.config.symbol, label: this.config.symbol });
-      }
-      this.selSymbol.innerHTML = '';
-      list.forEach((s) => {
-        const o = el('option', null, s.label || s.symbol);
-        o.value = s.symbol;
-        this.selSymbol.appendChild(o);
-      });
-      const custom = el('option', null, '＋ Custom symbol…');
-      custom.value = '__custom__';
-      this.selSymbol.appendChild(custom);
-      this.selSymbol.value = this.config.symbol;
-    }
+    fillSymbols() { this.symbolInput.value = this.config.symbol; }
 
     /* ---------------------------------------------------------- chart */
     mount(parent) {
@@ -167,9 +178,7 @@
       this.chart = LWC.createChart(this.chartEl, {
         layout: {
           background: { type: 'solid', color: '#121722' },
-          textColor: '#8b97ab',
-          fontSize: 10,
-          attributionLogo: false,
+          textColor: '#8b97ab', fontSize: 10, attributionLogo: false,
         },
         grid: {
           vertLines: { color: 'rgba(34,43,58,.55)' },
@@ -205,12 +214,14 @@
     apply(patch) {
       const before = JSON.stringify(this.config);
       Object.assign(this.config, patch);
-      if (patch.source) { this.fillTimeframes(); this.fillSymbols(); }
+      if (patch.source) { this.fillTimeframes(); }
       this.selSource.value = this.config.source;
       this.selTf.value = this.config.timeframe;
-      this.selSymbol.value = this.config.symbol;
+      this.symbolInput.value = this.config.symbol;
       if (JSON.stringify(this.config) === before) return;
+      this.paintAlertBadge();
       this.ctx.onChange(this.index, this.config);
+      if (patch.indicators) { this.applyIndicators(); return; }
       this.reload();
     }
 
@@ -227,6 +238,7 @@
       this.lastPrice = null;
       this.refPrice = null;
       this.lastBar = null;
+      this.candles = [];
       this.tSym.textContent = this.config.symbol;
       this.tPrice.textContent = '—';
       this.tChg.textContent = '—';
@@ -242,20 +254,18 @@
         const candles = res.candles || [];
         if (!candles.length) throw new Error('no candles returned');
 
+        this.candles = candles;
         this.decimals = decimalsFor(candles[candles.length - 1].close);
         this.series.applyOptions({
           priceFormat: { type: 'price', precision: this.decimals, minMove: Math.pow(10, -this.decimals) },
         });
-
-        const shift = this.tzShift;
-        this.series.setData(candles.map((c) => ({
-          time: c.time + shift,
-          open: c.open, high: c.high, low: c.low, close: c.close,
-        })));
+        this.series.setData(this.chartData());
+        this.applyIndicators();
         this.chart.timeScale().fitContent();
 
         this.lastBar = Object.assign({}, candles[candles.length - 1]);
-        this.refPrice = candles[0].open;
+        this.refPrice = this.computeReference(candles);
+        this.tChg.title = this.referenceLabel();
         this.message('');
         this.setPrice(this.lastBar.close, true);
         this.startLive();
@@ -266,13 +276,51 @@
       }
     }
 
+    /* What the ticker's change is measured against.
+     *
+     * Using the first bar in the window worked while a day was the longest
+     * timeframe, but on a monthly chart that reaches back to the 1990s and
+     * the percentage becomes meaningless. So: intraday compares with the
+     * previous session's close ("change today"), and daily and longer compare
+     * with the previous bar's close ("change this day/week/month"). */
+    computeReference(candles) {
+      if (!candles || !candles.length) return null;
+      if (candles.length < 2) return candles[0].open;
+
+      const tf = this.config.timeframe;
+      if (tf === '1d' || this.isLongTf) return candles[candles.length - 2].close;
+
+      const shift = this.tzShift;
+      const dayOf = (c) => Math.floor((c.time + shift) / 86400);
+      const today = dayOf(candles[candles.length - 1]);
+      for (let i = candles.length - 2; i >= 0; i--) {
+        if (dayOf(candles[i]) !== today) return candles[i].close;
+      }
+      return candles[0].open;
+    }
+
+    referenceLabel() {
+      const tf = this.config.timeframe;
+      if (tf === '1M') return 'Change this month';
+      if (tf === '1w') return 'Change this week';
+      if (tf === '1d') return 'Change since the previous daily close';
+      return 'Change today (vs the previous session close)';
+    }
+
+    chartData() {
+      const shift = this.tzShift;
+      return this.candles.map((c) => ({
+        time: c.time + shift,
+        open: c.open, high: c.high, low: c.low, close: c.close,
+      }));
+    }
+
     startLive() {
       const src = this.source;
       this.unsubLive = Feeds.subscribe(src, this.config.symbol, this.config.timeframe, {
         onCandle: (c) => this.onCandle(c),
         onPrice: (q) => this.onPrice(q),
       });
-
       const refreshMs = src.stream.refresh_ms;
       if (refreshMs) {
         this.refreshTimer = setInterval(() => {
@@ -286,7 +334,6 @@
       if (this.refreshTimer) { clearInterval(this.refreshTimer); this.refreshTimer = null; }
     }
 
-    /** Quiet re-pull of bars for polled sources (keeps OHLC honest). */
     async refreshHistory() {
       const token = this.reqToken;
       try {
@@ -294,47 +341,241 @@
           this.config.source, this.config.symbol, this.config.timeframe, 600
         );
         if (token !== this.reqToken || !res.candles || !res.candles.length) return;
-        const shift = this.tzShift;
-        this.series.setData(res.candles.map((c) => ({
-          time: c.time + shift,
-          open: c.open, high: c.high, low: c.low, close: c.close,
-        })));
+        this.candles = res.candles;
+        this.series.setData(this.chartData());
+        this.applyIndicators();
         this.lastBar = Object.assign({}, res.candles[res.candles.length - 1]);
-      } catch (_) { /* a failed refresh is not worth disturbing the pane */ }
+        this.refPrice = this.computeReference(res.candles);
+      } catch (_) { /* a failed refresh should not disturb the pane */ }
     }
 
-    /* Real bar from a websocket feed. */
     onCandle(c) {
       if (!this.series) return;
       this.series.update({
         time: c.time + this.tzShift,
         open: c.open, high: c.high, low: c.low, close: c.close,
       });
-      this.lastBar = { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close };
+      const last = this.candles[this.candles.length - 1];
+      if (last && last.time === c.time) this.candles[this.candles.length - 1] = c;
+      else this.candles.push(c);
+      this.applyIndicators();
       this.setPrice(c.close);
     }
 
-    /* Bare tick — fold it into the bar we're standing on. */
     onPrice(q) {
       const price = q.price;
       const now = q.time || Math.floor(Date.now() / 1000);
       if (this.series && this.lastBar) {
+        const b = this.lastBar;
         const tf = this.tfSeconds;
         const bucket = Math.floor(now / tf) * tf;
-        if (bucket > this.lastBar.time) {
-          this.lastBar = { time: bucket, open: price, high: price, low: price, close: price };
+        if (!this.isLongTf && bucket > b.time) {
+          this.lastBar = { time: bucket, open: price, high: price, low: price, close: price, volume: 0 };
+          this.candles.push(this.lastBar);
         } else {
-          this.lastBar.close = price;
-          this.lastBar.high = Math.max(this.lastBar.high, price);
-          this.lastBar.low = Math.min(this.lastBar.low, price);
+          b.close = price;
+          b.high = Math.max(b.high, price);
+          b.low = Math.min(b.low, price);
+          const last = this.candles[this.candles.length - 1];
+          if (last && last.time === b.time) Object.assign(last, b);
         }
-        const b = this.lastBar;
+        const bar = this.lastBar;
         this.series.update({
-          time: b.time + this.tzShift,
-          open: b.open, high: b.high, low: b.low, close: b.close,
+          time: bar.time + this.tzShift,
+          open: bar.open, high: bar.high, low: bar.low, close: bar.close,
         });
+        this.applyIndicators();
       }
       this.setPrice(price);
+    }
+
+    /* ---------------------------------------------------- indicators */
+    applyIndicators() {
+      if (!this.chart) return;
+      const cfg = this.config.indicators || {};
+      const shift = this.tzShift;
+      const wanted = new Map();
+
+      Indicators.CATALOG.forEach((spec) => {
+        const on = cfg[spec.id];
+        if (!on) return;
+        Indicators.compute(spec.id, this.candles, on).forEach((line) => {
+          if (line.data && line.data.length) wanted.set(line.key, line);
+        });
+      });
+
+      /* drop series no longer wanted */
+      for (const [key, series] of this.indSeries) {
+        if (!wanted.has(key)) {
+          try { this.chart.removeSeries(series); } catch (_) {}
+          this.indSeries.delete(key);
+        }
+      }
+
+      const hasRsi = Array.from(wanted.values()).some((l) => l.scale === 'rsi');
+
+      for (const [key, line] of wanted) {
+        let series = this.indSeries.get(key);
+        if (!series) {
+          series = addLine(this.chart, {
+            color: line.color,
+            lineWidth: line.width || 2,
+            lineStyle: line.dashed ? 2 : 0,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+            priceScaleId: line.scale === 'rsi' ? 'rsi' : 'right',
+          });
+          if (line.scale === 'rsi') {
+            this.chart.priceScale('rsi').applyOptions({
+              scaleMargins: { top: 0.78, bottom: 0 },
+            });
+            [30, 70].forEach((lvl) => series.createPriceLine({
+              price: lvl, color: 'rgba(139,151,171,.4)', lineWidth: 1,
+              lineStyle: 2, axisLabelVisible: false,
+            }));
+          }
+          this.indSeries.set(key, series);
+        }
+        series.setData(line.data.map((p) => ({ time: p.time + shift, value: p.value })));
+      }
+
+      /* make room at the bottom when RSI is showing */
+      this.chart.priceScale('right').applyOptions({
+        scaleMargins: { top: 0.12, bottom: hasRsi ? 0.3 : 0.12 },
+      });
+
+      this.btnInd.classList.toggle('on', Object.keys(cfg).some((k) => cfg[k]));
+    }
+
+    openIndicatorMenu() {
+      Popover.open(this.btnInd, (host, close) => {
+        host.appendChild(el('div', 'pop-title', 'Indicators'));
+        const cfg = Object.assign({}, this.config.indicators);
+
+        Indicators.CATALOG.forEach((spec) => {
+          const row = el('label', 'pop-row');
+          const cb = el('input');
+          cb.type = 'checkbox';
+          cb.checked = !!cfg[spec.id];
+
+          const swatch = el('span', 'pop-swatch');
+          swatch.style.background = spec.color;
+          const name = el('span', 'pop-name', spec.label);
+
+          const inputs = el('span', 'pop-fields');
+          const fieldEls = {};
+          spec.fields.forEach(([field, dflt]) => {
+            const n = el('input', 'pop-num');
+            n.type = 'number';
+            n.min = '1';
+            n.value = String((cfg[spec.id] && cfg[spec.id][field]) || dflt);
+            n.title = field;
+            fieldEls[field] = n;
+            inputs.appendChild(n);
+          });
+
+          const commit = () => {
+            if (cb.checked) {
+              const v = {};
+              Object.keys(fieldEls).forEach((f) => {
+                v[f] = Math.max(1, Number(fieldEls[f].value) || 1);
+              });
+              cfg[spec.id] = v;
+            } else {
+              delete cfg[spec.id];
+            }
+            this.config.indicators = cfg;
+            this.ctx.onChange(this.index, this.config);
+            this.applyIndicators();
+          };
+
+          cb.addEventListener('change', commit);
+          Object.values(fieldEls).forEach((n) => n.addEventListener('change', commit));
+          row.append(cb, swatch, name, inputs);
+          host.appendChild(row);
+        });
+
+        const foot = el('div', 'pop-foot');
+        const clear = el('button', 'btn small', 'Clear all');
+        clear.type = 'button';
+        clear.addEventListener('click', () => {
+          this.config.indicators = {};
+          this.ctx.onChange(this.index, this.config);
+          this.applyIndicators();
+          close();
+        });
+        foot.appendChild(clear);
+        host.appendChild(foot);
+      });
+    }
+
+    /* -------------------------------------------------------- alerts */
+    paintAlertBadge() {
+      if (!this.btnAlert) return;
+      const mine = Alerts.forSymbol(this.config.source, this.config.symbol);
+      const live = mine.filter((a) => !a.triggered).length;
+      const hit = mine.some((a) => a.triggered);
+      this.btnAlert.classList.toggle('on', live > 0);
+      this.btnAlert.classList.toggle('hit', hit);
+      this.btnAlert.dataset.count = live > 0 ? String(live) : '';
+    }
+
+    openAlertMenu() {
+      Popover.open(this.btnAlert, (host, close) => {
+        const draw = () => {
+          host.innerHTML = '';
+          host.appendChild(el('div', 'pop-title', 'Alerts · ' + this.config.symbol));
+
+          const mine = Alerts.forSymbol(this.config.source, this.config.symbol);
+          if (!mine.length) {
+            host.appendChild(el('div', 'pop-empty', 'No alerts on this symbol yet.'));
+          }
+          mine.forEach((a) => {
+            const row = el('div', 'pop-alert' + (a.triggered ? ' done' : ''));
+            const txt = el('span', null,
+              (a.dir === 'above' ? '↑ above ' : '↓ below ') + a.price);
+            const state = el('span', 'pop-state',
+              a.triggered ? 'triggered at ' + a.triggeredPrice
+                : a.armed ? 'watching' : 'waiting to re-arm');
+            const del = el('button', 'pop-x', '✕');
+            del.type = 'button';
+            del.title = 'Delete';
+            del.addEventListener('click', () => { Alerts.remove(a.id); draw(); });
+            row.append(txt, state, del);
+            host.appendChild(row);
+          });
+
+          const form = el('div', 'pop-addalert');
+          const dir = el('select', 'pop-dir');
+          [['above', 'Above'], ['below', 'Below']].forEach(([v, l]) => {
+            const o = el('option', null, l);
+            o.value = v;
+            dir.appendChild(o);
+          });
+          const price = el('input', 'pop-num wide');
+          price.type = 'number';
+          price.step = 'any';
+          price.placeholder = this.lastPrice != null ? String(this.lastPrice.toFixed(this.decimals)) : 'price';
+          const add = el('button', 'btn small primary', 'Add');
+          add.type = 'button';
+          const addIt = () => {
+            const v = Number(price.value);
+            if (!isFinite(v) || !price.value) return;
+            Alerts.add(this.config.source, this.config.symbol, dir.value, v, this.lastPrice);
+            price.value = '';
+            draw();
+          };
+          add.addEventListener('click', addIt);
+          price.addEventListener('keydown', (e) => { if (e.key === 'Enter') addIt(); });
+          form.append(dir, price, add);
+          host.appendChild(form);
+
+          host.appendChild(el('div', 'pop-note',
+            'Alerts are checked in this browser, so they only fire while the dashboard is open.'));
+        };
+        draw();
+      });
     }
 
     /* ------------------------------------------------- the ticker bar */
@@ -355,11 +596,13 @@
       this.tChg.textContent = sign + diff.toFixed(this.decimals) + '  ' + sign + pct.toFixed(2) + '%';
       this.tChg.dataset.dir = diff > 0 ? 'up' : diff < 0 ? 'down' : '';
 
+      Alerts.check(this.config.source, this.config.symbol, price, this.symbolLabel);
+
       if (silent || prev == null || price === prev) return;
 
       const dir = price > prev ? 'up' : 'down';
       this.ticker.classList.remove('up', 'down', 'flash-up', 'flash-down');
-      void this.ticker.offsetWidth;                 // restart the CSS animation
+      void this.ticker.offsetWidth;
       this.ticker.classList.add(dir, 'flash-' + dir);
       clearTimeout(this._flashTimer);
       this._flashTimer = setTimeout(() => {
@@ -367,13 +610,15 @@
       }, 520);
     }
 
-    /* -------------------------------------------------------- teardown */
+    /* ------------------------------------------------------- teardown */
     destroy() {
       this.reqToken++;
       this.stopLive();
       clearTimeout(this._flashTimer);
+      if (this.offAlerts) this.offAlerts();
       if (this.observer) this.observer.disconnect();
       if (this.chart) { try { this.chart.remove(); } catch (_) {} this.chart = null; }
+      this.indSeries.clear();
       if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
     }
   }
