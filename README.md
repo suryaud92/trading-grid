@@ -1,3 +1,13 @@
+---
+title: Live Trading Grid
+emoji: 📈
+colorFrom: blue
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Live Trading Grid
 
 A private split-screen dashboard of live Indian-market candlestick charts
