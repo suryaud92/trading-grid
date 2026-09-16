@@ -1,0 +1,153 @@
+/* settings.js — the Settings dialog. Broker credentials live on the SERVER;
+ * this screen only ever sees masked values and a connection status. */
+(function (global) {
+  'use strict';
+
+  const Settings = {
+    el: null,
+    state: null,
+
+    open() {
+      this.el = document.getElementById('settings');
+      this.el.hidden = false;
+      this.refresh();
+    },
+
+    close() {
+      if (this.el) this.el.hidden = true;
+      if (this.dirty) { this.dirty = false; global.App.reloadSources(); }
+    },
+
+    async refresh() {
+      this.status('Loading…');
+      try {
+        this.state = await Feeds.api.settings();
+        this.render();
+      } catch (err) {
+        this.status(err.message, true);
+      }
+    },
+
+    status(text, isError) {
+      const n = document.getElementById('set-status');
+      n.textContent = text || '';
+      n.classList.toggle('error', !!isError);
+      n.hidden = !text;
+    },
+
+    render() {
+      const k = this.state.kite;
+      document.getElementById('set-user').textContent = this.state.user || '—';
+
+      const badge = document.getElementById('kite-badge');
+      badge.textContent = k.connected ? 'Connected' : 'Not connected';
+      badge.dataset.state = k.connected ? 'on' : 'off';
+
+      const detail = document.getElementById('kite-detail');
+      if (k.connected) {
+        const age = k.connectedHoursAgo;
+        const stale = age != null && age > 12;
+        detail.innerHTML = '';
+        detail.append(
+          text(`${k.user ? k.user + ' · ' : ''}token ${k.accessTokenMasked}`),
+          el('br'),
+          text(age == null ? '' : `connected ${age < 1 ? 'less than an hour' : age + ' hours'} ago`
+            + (stale ? ' — Kite tokens expire around 6am IST, so reconnect if charts fail.' : ''))
+        );
+      } else {
+        detail.textContent = k.apiKey
+          ? 'API key saved. Sign in to Kite below to start the live feed.'
+          : 'Enter the API key and secret from your Kite Connect app.';
+      }
+
+      const keyIn = document.getElementById('kite-key');
+      if (document.activeElement !== keyIn) keyIn.value = k.apiKey || '';
+      const secIn = document.getElementById('kite-secret');
+      secIn.placeholder = k.apiSecretSet ? k.apiSecretMasked + ' (saved — leave blank to keep)'
+                                         : 'Kite API secret';
+
+      document.getElementById('kite-env-note').hidden =
+        !(k.envManaged.apiKey || k.envManaged.apiSecret);
+      document.getElementById('kite-step2').hidden = !k.apiKey;
+      document.getElementById('kite-disconnect').hidden = !k.connected;
+      this.status('');
+    },
+
+    async saveApp() {
+      const apiKey = document.getElementById('kite-key').value.trim();
+      const apiSecret = document.getElementById('kite-secret').value.trim();
+      if (!apiKey) return this.status('API key is required', true);
+      this.status('Saving…');
+      try {
+        this.state = await Feeds.api.post('/api/settings/kite', { apiKey, apiSecret });
+        document.getElementById('kite-secret').value = '';
+        this.dirty = true;
+        this.render();
+        this.status('Saved.');
+      } catch (err) { this.status(err.message, true); }
+    },
+
+    async openKiteLogin() {
+      this.status('Getting your Kite login URL…');
+      try {
+        const { loginUrl } = await Feeds.api.json('/api/settings/kite/login-url');
+        this.status('');
+        global.open(loginUrl, '_blank', 'noopener');
+        document.getElementById('kite-token').focus();
+      } catch (err) { this.status(err.message, true); }
+    },
+
+    /** Accepts a bare request_token or the whole redirect URL pasted in. */
+    async connect() {
+      const raw = document.getElementById('kite-token').value.trim();
+      if (!raw) return this.status('Paste the request_token (or the redirect URL)', true);
+      let requestToken = raw;
+      if (raw.includes('request_token=')) {
+        try {
+          requestToken = new URL(raw).searchParams.get('request_token') || raw;
+        } catch (_) {
+          requestToken = (raw.match(/request_token=([^&\s]+)/) || [])[1] || raw;
+        }
+      }
+      this.status('Connecting to Kite…');
+      try {
+        this.state = await Feeds.api.post('/api/settings/kite/connect', { requestToken });
+        document.getElementById('kite-token').value = '';
+        this.dirty = true;
+        this.render();
+        this.status('Connected. "Zerodha (Kite)" is now in every pane\'s source list.');
+      } catch (err) { this.status(err.message, true); }
+    },
+
+    async disconnect() {
+      this.status('Disconnecting…');
+      try {
+        this.state = await Feeds.api.post('/api/settings/kite/disconnect');
+        this.dirty = true;
+        this.render();
+        this.status('Disconnected.');
+      } catch (err) { this.status(err.message, true); }
+    },
+
+    wire() {
+      document.getElementById('open-settings').addEventListener('click', () => this.open());
+      document.getElementById('set-close').addEventListener('click', () => this.close());
+      document.getElementById('settings').addEventListener('click', (e) => {
+        if (e.target.id === 'settings') this.close();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && this.el && !this.el.hidden) this.close();
+      });
+      document.getElementById('kite-save').addEventListener('click', () => this.saveApp());
+      document.getElementById('kite-login').addEventListener('click', () => this.openKiteLogin());
+      document.getElementById('kite-connect').addEventListener('click', () => this.connect());
+      document.getElementById('kite-disconnect').addEventListener('click', () => this.disconnect());
+    },
+  };
+
+  function el(t) { return document.createElement(t); }
+  function text(s) { return document.createTextNode(s); }
+
+  global.Settings = Settings;
+  document.addEventListener('DOMContentLoaded', () => Settings.wire());
+})(window);

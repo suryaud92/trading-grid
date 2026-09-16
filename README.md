@@ -1,0 +1,182 @@
+# Live Trading Grid
+
+A private split-screen dashboard of live Indian-market candlestick charts
+(TradingView **Lightweight Charts**), 1–8 panes, each with its own symbol and
+timeframe. Google sign-in, locked to one superadmin account.
+
+* **yfinance** — NSE/BSE via Yahoo. Free, delayed, always available.
+* **Zerodha Kite** — real exchange ticks. Configured from the **Settings**
+  screen in the UI; no env vars, no redeploy.
+
+## Run locally
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python app.py          # http://127.0.0.1:5057
+```
+
+With no `FIREBASE_PROJECT_ID` set, **auth is off** and the app opens straight to
+the grid — which is what you want on localhost, and is why the startup banner
+says so out loud. Never expose that configuration to the internet.
+
+## Using it
+
+| | |
+|---|---|
+| **Charts 1 / 2 / 4 / 6 / 8** | 1 = full screen, 2 = side by side, 4 = 2×2, 6 = 3×2, 8 = 4×2. Also bound to the number keys. |
+| **Per-pane dropdowns** | Symbol · timeframe · source, independent per pane. The timeframe list re-populates from whatever that source supports. |
+| **＋ Custom symbol…** | Last entry in the symbol dropdown — any ticker the source understands (`TATAPOWER.NS`, `NSE:TATAPOWER`). Remembered. |
+| **Ticker bar** | Flashes green on an uptick, red on a downtick. |
+| **⚙ Settings** | Connect/disconnect Zerodha. |
+
+Layout, every pane's config and your custom tickers persist in `localStorage`.
+
+---
+
+## Hosting: read this first
+
+**GitHub Pages and Firebase Hosting are static-only. Neither can run Flask, and
+the backend is not optional here.** I tested this from a browser: Zerodha's API
+(including the public instrument dump) and Yahoo both return **no
+`Access-Control-Allow-Origin` header**, so a page fetching them directly is
+blocked by CORS every time. There is no static-only version of this app.
+
+So you need one small always-on Python process. Two shapes:
+
+### Option A — everything in one place (recommended)
+
+Flask serves the API *and* the frontend. One deploy, no CORS, no second URL.
+Firebase is used only for Google sign-in, which is free on the Spark plan.
+
+Free hosts that run a persistent Python process: **Hugging Face Spaces**
+(Docker, stays up), **Render** free web service (sleeps after ~15 min idle,
+~1 min cold start), Fly.io, Koyeb. A `Dockerfile`, `Procfile` and `render.yaml`
+are all included.
+
+> Serverless (Vercel/Netlify functions, Firebase Cloud Functions) does **not**
+> suit this: the Kite tick websocket needs a process that stays alive between
+> requests. Firebase Cloud Functions also require the paid Blaze plan — check
+> Google's current terms, but Spark won't deploy them.
+
+### Option B — frontend on Firebase Hosting / GitHub Pages
+
+Only if you specifically want it. Deploy `static/` there, put the backend on one
+of the hosts above, and connect the two:
+
+1. In `static/index.html`, set `window.API_BASE = 'https://your-backend.example'`
+2. On the backend, set `ALLOWED_ORIGINS=https://your-frontend.web.app`
+
+The page uses relative asset paths, so a GitHub Pages subpath works unchanged.
+`firebase.json` is included for `firebase deploy --only hosting`.
+
+---
+
+## Sign-in setup (one superadmin)
+
+1. Create a Firebase project → **Authentication → Sign-in method → enable Google**.
+2. **Authentication → Settings → Authorized domains**: add the domain the app is
+   served from (`your-app.onrender.com`, `you.github.io`, …).
+3. **Project settings → Your apps → Web app** gives you the config object.
+4. Set on the backend:
+
+```bash
+export FIREBASE_PROJECT_ID=your-project-id
+export SUPERADMIN_EMAIL=you@gmail.com
+export FIREBASE_WEB_CONFIG='{"apiKey":"...","authDomain":"...","projectId":"..."}'
+```
+
+Anyone can sign in with Google; only `SUPERADMIN_EMAIL` gets past the server.
+Everyone else is signed straight back out with "not authorised".
+
+**Where the security actually is.** The sign-in screen is convenience — the
+bundle is public and anyone can call the API directly. The real check is
+`auth.py`, which on *every* `/api` request verifies the ID token's signature
+against Google's public keys, checks `aud`/`iss` match your project (so a token
+minted for a different Firebase project is refused), checks expiry and
+`email_verified`, and then compares the email. A forged token with the right
+email but the wrong signature is rejected. `/api/health` and `/api/config` are
+deliberately public; everything else is gated.
+
+## Connecting Zerodha
+
+Settings (⚙) → paste your Kite **API key** and **secret** → Save → **Open Kite
+login** → sign in at Zerodha → paste the `request_token` back (the whole
+redirect URL works, it's parsed for you) → **Connect**.
+
+"Zerodha (Kite)" then appears in every pane's source dropdown with ~600 NSE/BSE
+symbols and intervals `1m 3m 5m 10m 15m 30m 1h 1d`. Symbols are
+`EXCHANGE:TRADINGSYMBOL` — `NSE:RELIANCE`, `NSE:NIFTY 50`, `BSE:RELIANCE`.
+
+**Credentials never reach the browser.** They live in `instance/settings.json`
+(chmod 600, gitignored); the Settings screen only ever receives masked values.
+That is deliberate: a Kite access token can place orders on your account.
+
+**The daily reconnect.** Kite access tokens expire every morning (~6am IST) and
+there is no refresh token, so you redo the login step each trading day.
+Zerodha's design, not this app's; automating it with stored credentials or TOTP
+is against their terms. Also note Kite Connect is a paid subscription and
+historical candles are a separate add-on — without it, live prices work but
+charts won't load.
+
+On a host with an ephemeral disk (Render free, HF Spaces), `instance/` is wiped
+on redeploy. Set `KITE_API_KEY` and `KITE_API_SECRET` as env vars so only the
+daily access-token step is left.
+
+## Adding another broker
+
+Everything lives in **`data_source.py`**; `app.py` and the frontend never name a
+broker. Write a `candles()` function and register it:
+
+```python
+def upstox_candles(symbol, timeframe, limit):
+    r = requests.get(f"https://api.upstox.com/v2/historical-candle/{symbol}/...", timeout=10)
+    return [{"time": ..., "open": ..., "high": ...,
+             "low": ..., "close": ..., "volume": ...} for c in r.json()["data"]]
+
+register_source(
+    key="upstox", label="Upstox",
+    timeframes=["1m", "5m", "1d"],
+    symbols=[{"symbol": "NSE_EQ|INE002A01018", "label": "Reliance"}],
+    candles=upstox_candles,
+)
+```
+
+Restart and it's in every pane's source dropdown. Optional hooks: `quotes()` for
+live ticks, `search()`, `display_tz_offset_min` (330 puts the axis in IST), and
+`stream` for the transport. A native browser websocket needs one extra `case` in
+`static/js/feeds.js`; polled sources need no frontend change.
+
+## Files
+
+```
+app.py                  Flask: /api/config /api/sources /api/candles /api/quotes /api/settings/*
+auth.py                 Firebase ID-token verification + superadmin check
+settings.py             server-side credential store (chmod 600, gitignored)
+data_source.py          ← the only file a new broker touches
+static/index.html
+static/css/style.css    grid layouts, ticker flash, gate + settings dialog
+static/js/feeds.js      auth-aware REST client + batched poller
+static/js/pane.js       one pane: dropdowns, chart, ticker bar
+static/js/app.js        grid, count selector, localStorage
+static/js/auth.js       Google sign-in gate (ES module)
+static/js/settings.js   the Settings dialog
+Dockerfile / Procfile / render.yaml / firebase.json
+```
+
+## Notes
+
+* **Run one worker.** The Kite websocket and its tick cache are per-process;
+  `--workers 2` would open two sockets and serve whichever cache a request
+  landed on. Concurrency comes from `--threads`. The included configs do this.
+* All yfinance panes batch into a single request per tick, and polling pauses
+  while the tab is hidden.
+* Yahoo is unofficial and rate-limits; responses are TTL-cached (3 s quotes,
+  20 s intraday candles). Kite: ~1 req/s quotes, ~3 req/s historical — which is
+  why ticks come off the websocket rather than polling `ltp()`.
+* Backend candles are always UTC epoch seconds; the pane applies the source's
+  `tzOffsetMin` for the displayed axis only.
+* Lightweight Charts loads from unpkg (pinned 4.2.0; v5 builds also work). To
+  run fully offline, drop the standalone file into `static/js/` and repoint the
+  `<script>` tag.
+* Market data only. No order placement anywhere in this code.

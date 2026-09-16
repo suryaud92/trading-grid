@@ -1,0 +1,21 @@
+# Render blueprint — free tier. Note the free plan sleeps after ~15 min idle
+# and has an ephemeral disk, so you reconnect Kite from Settings after a
+# redeploy (its token expires daily regardless).
+services:
+  - type: web
+    name: trading-grid
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120 app:app
+    envVars:
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: SUPERADMIN_EMAIL
+        sync: false
+      - key: FIREBASE_WEB_CONFIG
+        sync: false
+      - key: KITE_API_KEY
+        sync: false
+      - key: KITE_API_SECRET
+        sync: false

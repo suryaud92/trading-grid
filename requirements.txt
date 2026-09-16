@@ -1,0 +1,10 @@
+Flask>=3.0
+requests>=2.31
+yfinance>=0.2.54
+pandas>=2.0
+
+# Zerodha (Kite Connect) source
+kiteconnect>=5.0
+PyJWT>=2.8
+cryptography>=42.0
+gunicorn>=21.2

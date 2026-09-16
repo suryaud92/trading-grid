@@ -1,0 +1,11 @@
+# NEVER commit these — broker credentials live here
+instance/
+settings.json
+*.env
+.env*
+serviceAccount*.json
+
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

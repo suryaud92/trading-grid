@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Live Trading Grid</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>📈</text></svg>">
+<script>
+  /* Same-origin by default. If you host this bundle on Firebase Hosting or
+     GitHub Pages and the Flask backend somewhere else, put the backend's
+     origin here (and add this page's origin to ALLOWED_ORIGINS on the server). */
+  window.API_BASE = '';
+</script>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <h1>Live Trading Grid</h1>
+  </div>
+
+  <div class="count-picker" role="group" aria-label="Number of charts">
+    <span class="count-label">Charts</span>
+    <div class="segmented" id="count-picker"></div>
+  </div>
+
+  <div class="status">
+    <span class="pill" id="feed-status" title="Market data feed">
+      <i class="led"></i> <span id="feed-label">Feed</span>
+    </span>
+    <span class="pill user-chip" id="user-chip" hidden>
+      <span id="user-email"></span>
+      <button type="button" id="sign-out" title="Sign out">Sign out</button>
+    </span>
+    <button type="button" class="icon-btn" id="open-settings" title="Settings" aria-label="Settings">⚙</button>
+  </div>
+</header>
+
+<main class="grid" id="grid" data-count="4"></main>
+
+<div class="boot-error" id="boot-error" hidden></div>
+
+<!-- ------------------------------------------------------------ sign-in -->
+<div class="gate" id="gate" hidden>
+  <div class="gate-card">
+    <div class="gate-logo">📈</div>
+    <h2>Live Trading Grid</h2>
+    <p class="gate-sub">This dashboard is private. Sign in with the authorised Google account.</p>
+    <button type="button" class="btn primary" id="gate-signin">
+      <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45 24c0-1.6-.1-2.7-.4-4H24v7.5h12c-.2 2-1.6 5-4.5 7l7 5.4C42.6 36.2 45 30.6 45 24z"/><path fill="#34A853" d="M24 46c6.1 0 11.2-2 14.9-5.5l-7-5.4c-1.9 1.3-4.5 2.2-7.9 2.2-6 0-11.1-4-12.9-9.5l-7.3 5.6C7.5 40.8 15.1 46 24 46z"/><path fill="#FBBC05" d="M11.1 27.8c-.5-1.4-.7-2.9-.7-4.4s.3-3 .7-4.4l-7.3-5.7C2.4 16.4 1.6 20.1 1.6 24s.8 7.6 2.2 10.7l7.3-6.9z"/><path fill="#EA4335" d="M24 9.5c3.4 0 6.4 1.2 8.8 3.4l6.5-6.5C35.2 2.7 30.1.5 24 .5 15.1.5 7.5 5.7 3.8 13.3l7.3 5.7C12.9 13.5 18 9.5 24 9.5z"/></svg>
+      Sign in with Google
+    </button>
+    <div class="spinner" id="gate-spinner" hidden></div>
+    <p class="gate-msg" id="gate-msg"></p>
+  </div>
+</div>
+
+<!-- ----------------------------------------------------------- settings -->
+<div class="modal" id="settings" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="set-title">
+    <div class="modal-head">
+      <h2 id="set-title">Settings</h2>
+      <button type="button" class="icon-btn" id="set-close" aria-label="Close">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="row-meta">Signed in as <strong id="set-user">—</strong></div>
+
+      <section class="card">
+        <div class="card-head">
+          <h3>Zerodha — Kite Connect</h3>
+          <span class="badge" id="kite-badge" data-state="off">Not connected</span>
+        </div>
+        <p class="card-detail" id="kite-detail"></p>
+
+        <div class="field-row">
+          <label class="field">
+            <span>API key</span>
+            <input type="text" id="kite-key" placeholder="Kite API key" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="field">
+            <span>API secret</span>
+            <input type="password" id="kite-secret" placeholder="Kite API secret" autocomplete="off">
+          </label>
+          <button type="button" class="btn" id="kite-save">Save</button>
+        </div>
+        <p class="hint" id="kite-env-note" hidden>
+          Some values come from environment variables on the server and are used as defaults.
+        </p>
+
+        <div id="kite-step2" hidden>
+          <hr>
+          <p class="hint">
+            Kite access tokens expire every morning (about 6am IST) and there is no refresh
+            token, so this is a daily step. Sign in, then paste the <code>request_token</code>
+            from the URL Zerodha redirects you to — the whole URL is fine.
+          </p>
+          <div class="field-row">
+            <button type="button" class="btn" id="kite-login">1. Open Kite login ↗</button>
+            <label class="field grow">
+              <span>2. request_token (or redirect URL)</span>
+              <input type="text" id="kite-token" placeholder="https://your-redirect/?request_token=..." autocomplete="off" spellcheck="false">
+            </label>
+            <button type="button" class="btn primary" id="kite-connect">Connect</button>
+          </div>
+          <button type="button" class="btn danger" id="kite-disconnect" hidden>Disconnect</button>
+        </div>
+      </section>
+
+      <p class="status-line" id="set-status" hidden></p>
+
+      <p class="hint footnote">
+        Credentials are stored on the server, never in this browser. Your Kite access token
+        can place orders, which is why it is never sent to the page.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script src="js/feeds.js"></script>
+<script src="js/pane.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/app.js"></script>
+<script type="module" src="js/auth.js"></script>
+</body>
+</html>
