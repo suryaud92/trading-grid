@@ -35,11 +35,30 @@
     /* ---- which indicators the fx menu offers -------------------------- */
 
     loadFavourites() {
-      try {
-        const raw = JSON.parse(localStorage.getItem(FAV_KEY) || 'null');
-        if (Array.isArray(raw)) this.favourites = raw.filter((id) => this.byId[id]);
-      } catch (_) {}
-      if (!this.favourites || !this.favourites.length) this.favourites = this.defaultFavourites();
+      let stored = null;
+      try { stored = JSON.parse(localStorage.getItem(FAV_KEY) || 'null'); } catch (_) {}
+
+      // legacy shape: a bare array of ids
+      if (Array.isArray(stored)) stored = { ids: stored, known: stored };
+
+      if (!stored || !Array.isArray(stored.ids) || !stored.ids.length) {
+        this.favourites = this.defaultFavourites();
+        return this.favourites;
+      }
+
+      const ids = stored.ids.filter((id) => this.byId[id]);
+      /* An indicator added to the app after you last saved is new, not
+       * something you chose to hide — so curated newcomers join the menu while
+       * anything you deliberately unticked stays out. */
+      const knownThen = new Set(stored.known || stored.ids);
+      this.catalog.forEach((s2) => {
+        if (s2.curated && !knownThen.has(s2.id) && ids.indexOf(s2.id) === -1) {
+          ids.push(s2.id);
+        }
+      });
+
+      this.favourites = ids;
+      this.saveFavourites(ids);
       return this.favourites;
     },
 
@@ -49,7 +68,12 @@
 
     saveFavourites(ids) {
       this.favourites = (ids || []).filter((id) => this.byId[id]);
-      try { localStorage.setItem(FAV_KEY, JSON.stringify(this.favourites)); } catch (_) {}
+      try {
+        localStorage.setItem(FAV_KEY, JSON.stringify({
+          ids: this.favourites,
+          known: this.catalog.map((s2) => s2.id),   // so later additions are detectable
+        }));
+      } catch (_) {}
     },
 
     resetFavourites() {

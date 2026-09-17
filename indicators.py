@@ -314,6 +314,62 @@ def _fmt(v):
     f = float(v)
     return str(int(f)) if f == int(f) else str(f)
 
+def _fvg_avg(df, lookback, atr_mult):
+    """FVG Positioning Average — after the LuxAlgo Pine indicator.
+
+    Rather than drawing every gap, it averages the BOTTOMS of recent bullish
+    gaps into one line and the TOPS of recent bearish gaps into another. Where
+    unfilled imbalances cluster tends to be where price reacts, so a drift of
+    scattered boxes becomes two levels you can actually trade against.
+
+    Each line is dropped (left as a gap in the plot) while price has not yet
+    reached it — the original hides the line the same way, because an average
+    price has not traded through is not support or resistance yet.
+    """
+    import pandas as pd
+
+    candles = [
+        {"time": int(t.timestamp()), "open": float(o), "high": float(h),
+         "low": float(l), "close": float(c)}
+        for t, o, h, l, c in zip(df.index, df.open, df.high, df.low, df.close)
+    ]
+    lookback = max(2, int(lookback))
+    gaps = detect_fvgs(candles, float(atr_mult))
+
+    by_index = {}
+    for g in gaps:
+        by_index.setdefault(g["i"], []).append(g)
+
+    n = len(candles)
+    up_line = [float("nan")] * n
+    down_line = [float("nan")] * n
+    live_up, live_down = [], []
+
+    for i in range(n):
+        for g in by_index.get(i, []):
+            (live_up if g["dir"] == "bull" else live_down).append(g)
+
+        # a gap's box starts two bars before it completes, as in the original
+        live_up = [g for g in live_up if (g["i"] - 2) >= i - lookback]
+        live_down = [g for g in live_down if (g["i"] - 2) >= i - lookback]
+
+        window = candles[max(0, i - 4):i + 1]
+        highest = max(x["high"] for x in window)
+        lowest = min(x["low"] for x in window)
+
+        if live_up:
+            avg = sum(g["bottom"] for g in live_up) / len(live_up)
+            if highest >= avg:                 # price has reached it
+                up_line[i] = avg
+        if live_down:
+            avg = sum(g["top"] for g in live_down) / len(live_down)
+            if lowest <= avg:
+                down_line[i] = avg
+
+    idx = df.index
+    return {"bull": pd.Series(up_line, index=idx), "bear": pd.Series(down_line, index=idx)}
+
+
 def _volume(df):
     # Yahoo reports zero volume for indices (^NSEI, ^NSEBANK). Returning an
     # all-zero series would give you an empty pane with a -0.05..0.05 axis, so
@@ -390,6 +446,13 @@ def _kvo(df):            return {"kvo": _ta().kvo(df.high, df.low, df.close, df.
 
 
 CATALOG += [
+    Spec("fvgavg", "FVG Positioning Avg", "price",
+         [Param("lookback", 30, 2, 500), Param("ATR x", 0.25, 0.05, 5)],
+         [Line("bull", "Bull average", "#089981"),
+          Line("bear", "Bear average", "#F23645")], _fvg_avg,
+         note="Average of recent unfilled gap edges, as dynamic support and "
+              "resistance. A line breaks where price has not reached it."),
+
     # Volume gets its own pane, drawn as bars rather than a line.
     Spec("volume", "Volume", "sub", [],
          [Line("volume", "Volume", "#64748b", style="histogram")], _volume,
@@ -658,7 +721,64 @@ def volume_profile(candles, bins=24, value_area=0.70):
     }
 
 
-def fair_value_gaps(candles, min_pct=0.15, keep=14):
+def _atr_values(candles, length=200):
+    """Wilder ATR as a plain list, with a sensible value before it warms up.
+
+    Early bars fall back to the running average range, which is what the
+    reference Pine script does — otherwise the first 200 bars would have no
+    threshold at all and every hairline gap would qualify.
+    """
+    n = len(candles)
+    if not n:
+        return []
+    trs = []
+    cum = 0.0
+    out = []
+    prev_close = candles[0]["close"]
+    atr = None
+    for i, c in enumerate(candles):
+        tr = max(c["high"] - c["low"],
+                 abs(c["high"] - prev_close),
+                 abs(c["low"] - prev_close))
+        prev_close = c["close"]
+        trs.append(tr)
+        cum += c["high"] - c["low"]
+        if i + 1 == length:
+            atr = sum(trs[-length:]) / length
+        elif atr is not None:
+            atr = (atr * (length - 1) + tr) / length
+        out.append(atr if atr is not None else cum / (i + 1))
+    return out
+
+
+def detect_fvgs(candles, atr_mult=0.25, atr_length=200):
+    """Three-bar imbalances, filtered the way the LuxAlgo script does it.
+
+    Two conditions beyond the bare gap:
+
+    * the gap must be wider than ATR x multiplier, so the threshold scales
+      with each instrument's own volatility instead of a fixed percentage
+      that is huge on a quiet ETF and meaningless on a volatile smallcap;
+    * the middle candle must CLOSE beyond the gap, not merely poke through it,
+      which filters out a long wick that left a gap behind it.
+    """
+    atr = _atr_values(candles, atr_length)
+    found = []
+    for i in range(2, len(candles)):
+        a, mid, c = candles[i - 2], candles[i - 1], candles[i]
+        threshold = atr[i] * atr_mult
+        if (c["low"] > a["high"] and mid["close"] > a["high"]
+                and (c["low"] - a["high"]) > threshold):
+            found.append({"i": i, "time": c["time"], "dir": "bull",
+                          "bottom": a["high"], "top": c["low"]})
+        elif (c["high"] < a["low"] and mid["close"] < a["low"]
+                and (a["low"] - c["high"]) > threshold):
+            found.append({"i": i, "time": c["time"], "dir": "bear",
+                          "bottom": c["high"], "top": a["low"]})
+    return found
+
+
+def fair_value_gaps(candles, atr_mult=0.25, keep=14):
     """Three-bar imbalances (ICT 'fair value gaps').
 
     Bullish when a bar's low sits above the high of two bars earlier, leaving
@@ -669,17 +789,9 @@ def fair_value_gaps(candles, min_pct=0.15, keep=14):
     if len(candles) < 3:
         return None
     zones = []
-    for i in range(2, len(candles)):
-        a, c = candles[i - 2], candles[i]
-        mid_price = c["close"] or 1
-        if c["low"] > a["high"]:
-            bottom, top, direction = a["high"], c["low"], "bull"
-        elif c["high"] < a["low"]:
-            bottom, top, direction = c["high"], a["low"], "bear"
-        else:
-            continue
-        if (top - bottom) / mid_price * 100 < min_pct:
-            continue                      # too small to mean anything
+    for gap in detect_fvgs(candles, atr_mult):
+        i, direction = gap["i"], gap["dir"]
+        bottom, top = gap["bottom"], gap["top"]
 
         filled_time = None
         for j in range(i + 1, len(candles)):
@@ -689,7 +801,7 @@ def fair_value_gaps(candles, min_pct=0.15, keep=14):
                 filled_time = nxt["time"]
                 break
         zones.append({
-            "time": c["time"], "top": top, "bottom": bottom,
+            "time": gap["time"], "top": top, "bottom": bottom,
             "dir": direction, "filledTime": filled_time,
         })
 
@@ -709,11 +821,11 @@ OVERLAY_SPECS = {
     },
     "fvg": {
         "id": "fvg", "label": "Fair Value Gaps", "pane": "overlay",
-        "params": [{"name": "min %", "default": 0.15, "min": 0.01, "max": 5}],
+        "params": [{"name": "ATR x", "default": 0.25, "min": 0.05, "max": 5}],
         "lines": [{"key": "fvg", "name": "FVG", "color": "#22c55e"}],
-        "note": "Three-bar imbalances, largest first. Unfilled are outlined, "
-                "filled are faded. Raise min % to see only the big ones.",
-        "fn": lambda candles, *a: fair_value_gaps(candles, a[0] if a else 0.15),
+        "note": "Three-bar imbalances sized against ATR, so the threshold scales "
+                "with each instrument. Unfilled are outlined, filled are faded.",
+        "fn": lambda candles, *a: fair_value_gaps(candles, a[0] if a else 0.25),
     },
 }
 

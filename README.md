@@ -180,11 +180,25 @@ closed up, the **POC** (busiest price) is marked, and the **70% value area** is
 drawn brighter than the rest. Indices have no volume on Yahoo, so nothing draws.
 
 **Fair Value Gaps** are three-bar imbalances: a bullish gap is a bar whose low
-sits above the high from two bars back, leaving prices nobody traded through. A
-gap is marked filled once a later bar trades back into it; filled ones stay on
-the chart but faded, because where price reacted still matters. The default
-minimum size is 0.15% — at 0.05% a ₹1,240 stock produces dozens of 60-paise
-"gaps" that mean nothing. Biggest unfilled gaps are kept first, capped at 14.
+sits above the high from two bars back, leaving prices nobody traded through.
+Two filters, both taken from LuxAlgo's Pine implementation:
+
+* the gap must exceed **ATR × 0.25**, so the threshold scales with each
+  instrument's own volatility. A fixed percentage cannot: 0.15% is a large move
+  on a quiet ETF and noise on a volatile smallcap.
+* the middle candle must **close** beyond the gap, not merely poke through it,
+  which rejects a long wick that happened to leave a gap behind it.
+
+A gap is marked filled once a later bar trades back into it; filled ones stay on
+the chart but faded, because where price reacted still matters. Biggest unfilled
+gaps are kept first, capped at 14.
+
+**FVG Positioning Average** turns those gaps into two levels rather than a
+scatter of boxes: the average of recent bullish gap *bottoms*, and of bearish
+gap *tops*. Where unfilled imbalances cluster tends to be where price reacts, so
+the pair act as dynamic support and resistance. Each line breaks where price has
+not yet reached it — an average price never traded through is not a level yet.
+The gradient shading from the original is not reproduced; the lines are.
 
 ### Alerts
 
