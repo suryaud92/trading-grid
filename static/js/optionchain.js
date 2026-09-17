@@ -54,18 +54,24 @@
       el.hidden = !text;
     },
 
+    /** Indices first, then stocks — the same split NSE puts in two dropdowns. */
+    pickerItems() {
+      const indices = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY',
+                       'NIFTYNXT50', 'SENSEX', 'BANKEX'];
+      const rank = (n) => {
+        const at = indices.indexOf(n);
+        return at === -1 ? 99 : at;
+      };
+      return this.underlyings
+        .slice()
+        .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
+        .map((u) => ({
+          symbol: u.name,
+          label: (rank(u.name) < 99 ? 'Index · ' : '') + u.expiries.length + ' expiries',
+        }));
+    },
+
     renderControls() {
-      /* 216 underlyings is too many for a plain dropdown, so it is a text box
-       * backed by a datalist: type to narrow, or open it and scroll. */
-      const list = document.getElementById('oc-underlying-list');
-      if (list.options.length !== this.underlyings.length) {
-        list.innerHTML = '';
-        this.underlyings.forEach((u) => {
-          const o = document.createElement('option');
-          o.value = u.name;
-          list.appendChild(o);
-        });
-      }
       if (!this.underlyings.some((u) => u.name === this.state.underlying)) {
         this.state.underlying = (this.underlyings[0] || {}).name || 'NIFTY';
       }
@@ -204,21 +210,28 @@
     },
 
     wire() {
-      document.getElementById('oc-underlying').addEventListener('change', (e) => {
-        const typed = (e.target.value || '').trim().toUpperCase();
-        const match = this.underlyings.find((u) => u.name === typed);
-        if (!match) {
-          this.status('No listed options for "' + typed + '".', true);
-          e.target.value = this.state.underlying;
-          return;
-        }
-        this.state.underlying = match.name;
-        this.state.expiry = null;
-        this.state.center = null;
-        this._scrolledOnce = false;
-        this.save();
-        this.renderControls();
-        this.refresh();
+      /* A native datalist filters its options by whatever is already in the
+       * box, so with "WIPRO" typed you could not see anything else without
+       * clearing it first. The chart's symbol picker has none of that
+       * behaviour, so reuse it: click shows everything, typing narrows. */
+      Combobox.attach(document.getElementById('oc-underlying'), {
+        items: () => this.pickerItems(),
+        current: () => this.state.underlying,
+        onPick: (name) => {
+          const match = this.underlyings.find((u) => u.name === name.toUpperCase());
+          if (!match) {
+            this.status('No listed options for "' + name + '".', true);
+            document.getElementById('oc-underlying').value = this.state.underlying;
+            return;
+          }
+          this.state.underlying = match.name;
+          this.state.expiry = null;
+          this.state.center = null;
+          this._scrolledOnce = false;
+          this.save();
+          this.renderControls();
+          this.refresh();
+        },
       });
       document.getElementById('oc-strike').addEventListener('change', (e) => {
         this.state.center = e.target.value ? Number(e.target.value) : null;

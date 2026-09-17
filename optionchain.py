@@ -47,9 +47,15 @@ def implied_vol(price, spot, strike, years, is_call, rate=RISK_FREE):
     """
     if price is None or price <= 0 or years <= 0 or spot <= 0:
         return None
-    intrinsic = max((spot - strike) if is_call else (strike - spot), 0.0)
-    if price < intrinsic - 1e-6:
-        return None                       # below intrinsic: stale or crossed quote
+
+    # The floor is the DISCOUNTED bound, not plain intrinsic. A deep
+    # in-the-money European put legitimately trades below K - S, because the
+    # strike is received at expiry rather than today; using undiscounted
+    # intrinsic rejected perfectly good quotes and printed no IV for them.
+    disc = strike * math.exp(-rate * years)
+    floor = max((spot - disc) if is_call else (disc - spot), 0.0)
+    if price < floor - 1e-6:
+        return None                       # genuinely below fair value: bad quote
 
     lo, hi = 0.01, 6.0
     if black_scholes(spot, strike, years, hi, is_call, rate) < price:
