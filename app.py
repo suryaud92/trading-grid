@@ -39,7 +39,17 @@ def index():
 
 @app.get("/api/health")
 def api_health():
-    return jsonify({"ok": True, "sources": [s["key"] for s in ds.all_sources()]})
+    """Public. Also reports which optional pieces actually loaded, so a broken
+    dependency in a deploy is visible without signing in."""
+    try:
+        patterns = len(ind.pattern_catalog())
+    except Exception:
+        patterns = 0
+    return jsonify({
+        "ok": True,
+        "sources": [s["key"] for s in ds.all_sources()],
+        "candlestickPatterns": patterns,
+    })
 
 
 @app.get("/api/config")
