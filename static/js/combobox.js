@@ -26,7 +26,12 @@
     });
     document.body.appendChild(listEl);
     window.addEventListener('scroll', reposition, true);
-    window.addEventListener('resize', close);
+    /* Same reason as the popover: the mobile keyboard fires resize, and
+     * closing here would dismiss the suggestions as soon as you typed. */
+    window.addEventListener('resize', reposition);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', reposition);
+    }
     return listEl;
   }
 

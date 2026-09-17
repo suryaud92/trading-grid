@@ -24,7 +24,17 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && current && !host.hidden) { e.stopPropagation(); close(); }
     });
-    window.addEventListener('resize', close);
+    /* Do NOT close on resize. On a phone, tapping a number field opens the
+     * on-screen keyboard, which fires resize — closing here made the menu
+     * vanish the instant you tried to edit anything. Reposition instead, which
+     * also flips the menu above the button when the keyboard eats the space
+     * below it. */
+    window.addEventListener('resize', () => { if (current && !host.hidden) place(); });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => {
+        if (current && !host.hidden) place();
+      });
+    }
     window.addEventListener('scroll', () => { if (current) place(); }, true);
     return host;
   }
