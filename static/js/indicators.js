@@ -145,7 +145,12 @@
           if (bands >= this.MAX_BANDS) return;
           bands += 1;
         }
-        out.push({ id: e.id, params: (e.params || []).map(Number) });
+        out.push({
+          id: e.id,
+          // a choice parameter is a string; Number() would turn it into NaN
+          params: (e.params || []).map((v) =>
+            (typeof v === 'string' && isNaN(Number(v))) ? v : Number(v)),
+        });
       });
       return out.slice(0, 10);
     },

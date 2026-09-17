@@ -150,6 +150,33 @@ A stored list that has somehow lost its contents is refilled from the defaults
 on load, so the drawer can never strand you with an empty list and no way back.
 The ↺ button restores everything.
 
+### Pivot points
+
+Support and resistance from the **previous** period's high, low and close, held
+flat across the period that follows — the level you trade against today was
+fixed by yesterday and does not move under you.
+
+Three parameters, two of them dropdowns:
+
+* **Anchor** — Daily, Weekly, Monthly, Quarterly, 6 months, Yearly
+* **Method** — Classic, Fibonacci, Camarilla
+* **Levels** — how many R/S pairs to draw (1–3)
+
+Choice parameters like these are new to the indicator system: a `Param` with
+`options` renders a dropdown instead of a number box, and the spec string
+carries the value as text (`pivots:week:classic:2`).
+
+### Futures and options
+
+Kite's derivatives segment is indexed alongside cash: about **650 futures** and
+**36,000 option contracts**, roughly 60,000 instruments in all. They are
+searchable but deliberately kept out of the dropdown's default list, or every
+list would be a wall of strikes.
+
+Search matches on every word, so `nifty fut` finds the futures chain and
+`nifty 23200 ce` finds that strike. Cash and index results rank above futures,
+and futures above options.
+
 ### Candlestick patterns
 
 All **61 TA-Lib pattern recognisers** — Engulfing, Hammer, Morning Star, Doji,

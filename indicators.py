@@ -38,9 +38,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 @dataclass
 class Param:
     name: str
-    default: float
+    default: object
     min: float = 1
     max: float = 500
+    options: list = None      # [[value, label], ...] renders a dropdown
 
 
 @dataclass
@@ -67,8 +68,11 @@ class Spec:
             "id": self.id,
             "label": self.label,
             "pane": self.pane,
-            "params": [{"name": p.name, "default": p.default, "min": p.min, "max": p.max}
-                       for p in self.params],
+            "params": [
+                {"name": p.name, "default": p.default, "min": p.min, "max": p.max,
+                 "options": p.options}
+                for p in self.params
+            ],
             "lines": [{"key": l.key, "name": l.name, "color": l.color} for l in self.lines],
             "note": self.note,
         }
@@ -231,7 +235,7 @@ def parse_spec(text: str) -> list:
             try:
                 args.append(float(b))
             except ValueError:
-                pass
+                args.append(b)          # a choice, e.g. "week"
         out.append((ind_id, args))
     return out[:8]                      # a sane cap per pane
 
@@ -311,8 +315,98 @@ def compute(candles, spec_text, tail=None):
 
 
 def _fmt(v):
+    if isinstance(v, str):
+        return v
     f = float(v)
     return str(int(f)) if f == int(f) else str(f)
+
+PIVOT_ANCHORS = [
+    ["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"],
+    ["quarter", "Quarterly"], ["half", "6 months"], ["year", "Yearly"],
+]
+
+
+def _anchor_key(ts, anchor, tz_offset_min=330):
+    """Which period a bar belongs to, in exchange-local time."""
+    from datetime import datetime, timedelta, timezone
+
+    d = datetime.fromtimestamp(ts, timezone(timedelta(minutes=tz_offset_min)))
+    if anchor == "day":
+        return (d.year, d.month, d.day)
+    if anchor == "week":
+        iso = d.isocalendar()
+        return (iso[0], iso[1])
+    if anchor == "month":
+        return (d.year, d.month)
+    if anchor == "quarter":
+        return (d.year, (d.month - 1) // 3)
+    if anchor == "half":
+        return (d.year, 0 if d.month <= 6 else 1)
+    return (d.year,)
+
+
+def _pivot_levels(method, high, low, close):
+    """Classic, Fibonacci or Camarilla levels from one period's H/L/C."""
+    rng = high - low
+    p = (high + low + close) / 3.0
+    if method == "fib":
+        return {"P": p,
+                "R1": p + 0.382 * rng, "R2": p + 0.618 * rng, "R3": p + rng,
+                "S1": p - 0.382 * rng, "S2": p - 0.618 * rng, "S3": p - rng}
+    if method == "camarilla":
+        return {"P": p,
+                "R1": close + rng * 1.1 / 12, "R2": close + rng * 1.1 / 6,
+                "R3": close + rng * 1.1 / 4,
+                "S1": close - rng * 1.1 / 12, "S2": close - rng * 1.1 / 6,
+                "S3": close - rng * 1.1 / 4}
+    return {"P": p,
+            "R1": 2 * p - low, "R2": p + rng, "R3": high + 2 * (p - low),
+            "S1": 2 * p - high, "S2": p - rng, "S3": low - 2 * (high - p)}
+
+
+def _pivots(df, anchor, method, levels):
+    """Pivot points anchored to the PREVIOUS day/week/month/etc.
+
+    Each period's levels are drawn flat across the period that follows, which
+    is what makes them usable: the line you trade against today was fixed by
+    yesterday's range and does not move under you.
+    """
+    import pandas as pd
+
+    anchor = str(anchor)
+    method = str(method)
+    levels = max(1, min(int(levels), 3))
+
+    times = [int(t.timestamp()) for t in df.index]
+    highs, lows, closes = list(df.high), list(df.low), list(df.close)
+
+    names = ["P"] + [f"R{i}" for i in range(1, levels + 1)] \
+                  + [f"S{i}" for i in range(1, levels + 1)]
+    series = {n: [float("nan")] * len(times) for n in names}
+
+    current = None
+    agg = None
+    previous = None            # levels computed from the period just finished
+
+    for i, ts in enumerate(times):
+        key = _anchor_key(ts, anchor)
+        if key != current:
+            if agg is not None:
+                previous = _pivot_levels(method, agg["h"], agg["l"], agg["c"])
+            current = key
+            agg = {"h": highs[i], "l": lows[i], "c": closes[i]}
+        else:
+            agg["h"] = max(agg["h"], highs[i])
+            agg["l"] = min(agg["l"], lows[i])
+            agg["c"] = closes[i]
+
+        if previous:
+            for n in names:
+                series[n][i] = previous[n]
+
+    idx = df.index
+    return {n: pd.Series(series[n], index=idx) for n in names}
+
 
 def _fvg_avg(df, lookback, atr_mult):
     """FVG Positioning Average — after the LuxAlgo Pine indicator.
@@ -446,6 +540,22 @@ def _kvo(df):            return {"kvo": _ta().kvo(df.high, df.low, df.close, df.
 
 
 CATALOG += [
+    Spec("pivots", "Pivot Points", "price",
+         [Param("anchor", "day", options=PIVOT_ANCHORS),
+          Param("method", "classic", options=[["classic", "Classic"],
+                                              ["fib", "Fibonacci"],
+                                              ["camarilla", "Camarilla"]]),
+          Param("levels", 2, 1, 3)],
+         [Line("P", "Pivot", "#eab308", width=2),
+          Line("R1", "R1", "#f87171", style="dashed", width=1),
+          Line("R2", "R2", "#ef4444", style="dashed", width=1),
+          Line("R3", "R3", "#b91c1c", style="dashed", width=1),
+          Line("S1", "S1", "#4ade80", style="dashed", width=1),
+          Line("S2", "S2", "#22c55e", style="dashed", width=1),
+          Line("S3", "S3", "#15803d", style="dashed", width=1)], _pivots,
+         note="Support and resistance from the previous period's range. "
+              "Anchor to the day, week, month, quarter, 6 months or year."),
+
     Spec("fvgavg", "FVG Positioning Avg", "price",
          [Param("lookback", 30, 2, 500), Param("ATR x", 0.25, 0.05, 5)],
          [Line("bull", "Bull average", "#089981"),

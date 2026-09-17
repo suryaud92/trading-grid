@@ -730,13 +730,34 @@
 
             const fields = el('span', 'pop-fields');
             spec.params.forEach((pmeta, pi) => {
+              const value = entry.params[pi] != null ? entry.params[pi] : pmeta.default;
+
+              /* a parameter with options is a choice, not a number — e.g. the
+               * pivot anchor is daily / weekly / monthly, not 1 / 2 / 3 */
+              if (pmeta.options && pmeta.options.length) {
+                const sel = el('select', 'pop-dir');
+                sel.title = pmeta.name;
+                pmeta.options.forEach(([v, label]) => {
+                  const o = el('option', null, label);
+                  o.value = v;
+                  sel.appendChild(o);
+                });
+                sel.value = String(value);
+                sel.addEventListener('change', () => {
+                  entry.params[pi] = sel.value;
+                  this.setIndicators(list);
+                });
+                fields.appendChild(sel);
+                return;
+              }
+
               const n = el('input', 'pop-num');
               n.type = 'number';
               n.step = 'any';
               n.min = String(pmeta.min);
               n.max = String(pmeta.max);
               n.title = pmeta.name;
-              n.value = String(entry.params[pi] != null ? entry.params[pi] : pmeta.default);
+              n.value = String(value);
               n.addEventListener('change', () => {
                 const v = Math.min(Math.max(Number(n.value) || pmeta.default, pmeta.min), pmeta.max);
                 n.value = String(v);

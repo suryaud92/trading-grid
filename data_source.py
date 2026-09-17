@@ -501,15 +501,27 @@ def _kite_instruments():
         cfg = app_settings.kite_credentials()
         client = KiteConnect(api_key=cfg["api_key"] or "public")
         rows = {}
-        for exch in ("NSE", "BSE"):
+        # NFO is the derivatives segment: ~650 futures and ~36,000 option
+        # contracts. They are searchable but deliberately kept out of the
+        # dropdown head, or every list would be a wall of strikes.
+        for exch in ("NSE", "BSE", "NFO"):
             try:
                 for i in client.instruments(exch):
-                    if i.get("segment") not in (exch, "INDICES"):
+                    seg = i.get("segment") or ""
+                    if exch in ("NSE", "BSE") and seg not in (exch, "INDICES"):
                         continue
+                    itype = i.get("instrument_type") or "EQ"
+                    kind = ("FUT" if itype == "FUT"
+                            else "OPT" if itype in ("CE", "PE")
+                            else "INDEX" if seg == "INDICES" else "EQ")
                     rows[exch + ":" + i["tradingsymbol"]] = {
                         "token": i["instrument_token"],
                         "tradingsymbol": i["tradingsymbol"],
                         "name": i.get("name") or i["tradingsymbol"],
+                        "kind": kind,
+                        "expiry": str(i.get("expiry") or ""),
+                        "strike": float(i.get("strike") or 0),
+                        "lot": int(i.get("lot_size") or 0),
                     }
             except Exception as err:
                 print(f"[kite] instrument dump for {exch} failed: {err}")
@@ -671,32 +683,49 @@ def kite_search(query):
     if ":" in q:
         q = q.split(":", 1)[1]
 
+    # Match every word, so "nifty fut" and "reliance 2600 ce" both work.
+    terms = [t for t in q.split() if t]
+    head = terms[0]
+
     scored = []
     for key, r in rows.items():
         ts = r["tradingsymbol"].lower()
         name = (r["name"] or "").lower()
-        if ts == q:
-            rank = 0
-        elif ts.startswith(q):
-            rank = 1
-        elif name.startswith(q):
-            rank = 2
-        elif q in ts:
-            rank = 3
-        elif q in name:
-            rank = 4
-        else:
+        kind = r.get("kind", "EQ")
+        hay = ts + " " + name + " " + ("fut" if kind == "FUT" else
+                                       "ce pe opt option" if kind == "OPT" else "")
+        if not all(t in hay for t in terms):
             continue
-        # prefer NSE over BSE, and shorter symbols, at the same rank
-        scored.append((rank, 0 if key.startswith("NSE:") else 1, len(ts), key, r))
-        if len(scored) > 4000:
+
+        if ts == head:
+            rank = 0
+        elif ts.startswith(head):
+            rank = 1
+        elif name.startswith(head):
+            rank = 2
+        elif head in ts:
+            rank = 3
+        else:
+            rank = 4
+
+        # cash and index first, then futures, then the 36k option strikes
+        kind_rank = {"EQ": 0, "INDEX": 0, "FUT": 1, "OPT": 2}.get(kind, 3)
+        scored.append((rank, kind_rank, 0 if key.startswith("NSE:") else 1,
+                       len(ts), key, r))
+        if len(scored) > 8000:
             break
 
-    scored.sort(key=lambda x: x[:3])
+    scored.sort(key=lambda x: x[:4])
     out = []
-    for _r, _e, _l, key, r in scored[:50]:
-        label = r["tradingsymbol"] if r["name"] == r["tradingsymbol"] else \
-            f"{r['name']} ({r['tradingsymbol']})"
+    for _r, _k, _e, _l, key, r in scored[:50]:
+        kind = r.get("kind", "EQ")
+        if kind == "OPT":
+            label = f"{r['name']} {r['strike']:.0f} {r['tradingsymbol'][-2:]} · {r['expiry']}"
+        elif kind == "FUT":
+            label = f"{r['name']} futures · {r['expiry']}"
+        else:
+            label = r["tradingsymbol"] if r["name"] == r["tradingsymbol"] else \
+                f"{r['name']} ({r['tradingsymbol']})"
         out.append({"symbol": key, "label": label})
     return out
 

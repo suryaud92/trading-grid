@@ -802,3 +802,5 @@ body {
 .wl-item.unavailable { opacity: .42; }
 .wl-item.unavailable .wl-sym { text-decoration: line-through; }
 #wl-reset { flex: 0 0 auto; padding: 5px 9px; }
+
+.pop-fields .pop-dir { max-width: 92px; }
