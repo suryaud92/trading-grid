@@ -139,6 +139,7 @@
 
       Combobox.attach(this.symbolInput, {
         items: () => this.ctx.symbolsFor(this.source.key),
+        sourceKey: () => this.source.key,
         current: () => this.config.symbol,
         onPick: (symbol) => {
           if (!this.ctx.symbolsFor(this.source.key).some((s) => s.symbol === symbol)) {

@@ -354,14 +354,33 @@ def yfinance_quotes(symbols):
 
 
 def yfinance_search(query):
+    """Curated names first, then plausible Yahoo spellings of what was typed.
+
+    Yahoo has no symbol-search API we can rely on, and its Indian tickers need
+    a suffix: GOLDBEES is really GOLDBEES.NS. Typing the bare name used to
+    offer only the bare name, which then failed to load — so suggest the
+    suffixed forms too.
+    """
     q = (query or "").strip()
+    ql = q.lower()
     hits = [
         s for s in NSE_SYMBOLS
-        if q.lower() in s["symbol"].lower() or q.lower() in s["label"].lower()
+        if ql in s["symbol"].lower() or ql in s["label"].lower()
     ][:40]
-    if q and not any(h["symbol"].lower() == q.lower() for h in hits):
-        hits.insert(0, {"symbol": q.upper(), "label": f"{q.upper()} (as typed)"})
-    return hits
+    if not q:
+        return hits
+
+    known = {h["symbol"].lower() for h in hits}
+    suggestions = []
+    upper = q.upper()
+    if "." not in q and not q.startswith("^"):
+        for suffix, where in ((".NS", "NSE"), (".BO", "BSE")):
+            cand = upper + suffix
+            if cand.lower() not in known:
+                suggestions.append({"symbol": cand, "label": f"{upper} on {where}"})
+    if upper.lower() not in known:
+        suggestions.append({"symbol": upper, "label": f"{upper} (as typed)"})
+    return suggestions + hits
 
 
 def _nse(ticker, name):
@@ -629,6 +648,54 @@ def kite_quotes(symbols):
     return out
 
 
+def kite_search(query):
+    """Search the whole Kite instrument list, not the dropdown's short head.
+
+    Kite carries ~23,000 NSE+BSE instruments. Shipping those to the browser
+    would be a multi-megabyte payload for something the user types two letters
+    into, so the dropdown carries a short list and anything else is found here.
+    """
+    q = (query or "").strip().lower()
+    try:
+        rows = _kite_instruments()
+    except Exception:
+        return []
+    if not q:
+        return _kite_symbol_list()[:50]
+
+    if ":" in q:
+        q = q.split(":", 1)[1]
+
+    scored = []
+    for key, r in rows.items():
+        ts = r["tradingsymbol"].lower()
+        name = (r["name"] or "").lower()
+        if ts == q:
+            rank = 0
+        elif ts.startswith(q):
+            rank = 1
+        elif name.startswith(q):
+            rank = 2
+        elif q in ts:
+            rank = 3
+        elif q in name:
+            rank = 4
+        else:
+            continue
+        # prefer NSE over BSE, and shorter symbols, at the same rank
+        scored.append((rank, 0 if key.startswith("NSE:") else 1, len(ts), key, r))
+        if len(scored) > 4000:
+            break
+
+    scored.sort(key=lambda x: x[:3])
+    out = []
+    for _r, _e, _l, key, r in scored[:50]:
+        label = r["tradingsymbol"] if r["name"] == r["tradingsymbol"] else \
+            f"{r['name']} ({r['tradingsymbol']})"
+        out.append({"symbol": key, "label": label})
+    return out
+
+
 def _kite_symbol_list():
     head = ["NIFTY 50", "NIFTY BANK", "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK",
             "INFY", "SBIN", "BHARTIARTL", "ITC", "LT", "AXISBANK", "KOTAKBANK",
@@ -681,6 +748,7 @@ def configure_zerodha() -> bool:
         symbols=_kite_symbol_list(),
         candles=kite_candles,
         quotes=kite_quotes,
+        search=kite_search,
         stream={"kind": "poll", "interval_ms": 1000, "refresh_ms": 4000},
         default_symbol="NSE:NIFTY 50",
         default_timeframe="15m",

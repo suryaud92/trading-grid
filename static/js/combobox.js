@@ -12,6 +12,8 @@
 
   let listEl = null;
   let active = null;          // {input, opts, matches, cursor}
+  let remoteTimer = null;
+  let remoteSeq = 0;
 
   function ensureList() {
     if (listEl) return listEl;
@@ -145,6 +147,36 @@
     render();
   }
 
+  /* The local list is only a head of what a source offers — Kite carries
+   * ~23,000 instruments. Ask the server for the rest, debounced, and merge the
+   * answer in without disturbing what the user is already looking at. */
+  function queryServer(input, opts) {
+    if (!opts.sourceKey) return;
+    clearTimeout(remoteTimer);
+    const q = input.value.trim();
+    if (q.length < 2) return;
+    const seq = ++remoteSeq;
+
+    remoteTimer = setTimeout(async () => {
+      let hits;
+      try {
+        const res = await Feeds.api.json('/api/symbols?source='
+          + encodeURIComponent(opts.sourceKey()) + '&q=' + encodeURIComponent(q));
+        hits = res.symbols || [];
+      } catch (_) { return; }
+      if (seq !== remoteSeq) return;                 // a newer keystroke won
+      if (!active || active.input !== input) return;
+      if (input.value.trim() !== q) return;
+
+      const seen = new Set(active.matches.map((m) => m.symbol));
+      hits.forEach((h) => {
+        if (!seen.has(h.symbol)) { active.matches.push(h); seen.add(h.symbol); }
+      });
+      active.matches = active.matches.slice(0, 40);
+      render();
+    }, 180);
+  }
+
   /** Turn a text input into a symbol picker. */
   function attach(input, opts) {
     input.setAttribute('autocomplete', 'off');
@@ -156,6 +188,7 @@
       if (active && active.input !== input) close();
       active = { input, opts, matches: search(opts.items(), input.value), cursor: 0 };
       render();
+      queryServer(input, opts);
     });
     input.addEventListener('blur', () => {
       setTimeout(() => {

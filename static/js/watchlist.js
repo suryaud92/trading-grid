@@ -161,8 +161,29 @@
       if (!items.length) {
         const empty = document.createElement('div');
         empty.className = 'pop-empty';
-        empty.textContent = q ? 'Nothing matches.' : 'This list is empty.';
-        host.appendChild(empty);
+        if (q) {
+          /* This box filters THIS list; it is not a symbol search. Say so, and
+           * offer the two things someone typing here actually wants. */
+          empty.textContent = 'Not in this list.';
+          const addIt = document.createElement('button');
+          addIt.type = 'button';
+          addIt.className = 'btn small';
+          addIt.style.margin = '8px 0 4px';
+          addIt.textContent = 'Add "' + query.trim().toUpperCase() + '" to ' + list.name;
+          addIt.addEventListener('click', () => {
+            this.add(query);
+            document.getElementById('wl-search').value = '';
+            this.renderItems();
+          });
+          const hint = document.createElement('div');
+          hint.className = 'pop-note';
+          hint.textContent = 'To chart any symbol without adding it, type in a '
+            + "chart's symbol box instead — that searches the whole exchange.";
+          host.append(empty, addIt, hint);
+        } else {
+          empty.textContent = 'This list is empty.';
+          host.appendChild(empty);
+        }
         return;
       }
 

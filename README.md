@@ -28,7 +28,7 @@ says so out loud. Never expose that configuration to the internet.
 | **⛶ Maximise** | Blow one chart up full-screen and back. Keyboard: `F` on the active chart. |
 | **☰ Watchlist** | Categorised lists (Indian, US tech, Crypto & commodities) in a side drawer, editable, with ↺ to restore the defaults. Clicking loads into the chart you last clicked — or into every chart when symbol sync is on. |
 | **✛ Crosshair / 🔗 Symbol** | Scrub time across every chart at once, and change them all to one ticker together. |
-| **Symbol search** | Type in the symbol box and matches appear as you go, by ticker *or* company name ("tata" finds Tata Steel, Tata Motors and TCS). Anything not in the list can be entered as typed and is remembered. |
+| **Symbol search** | Type in a chart's symbol box. Matches appear as you go, by ticker *or* company name. On Zerodha this searches **all ~23,000** NSE/BSE instruments server-side, not just the dropdown's head; on yfinance it suggests the `.NS` / `.BO` spellings Yahoo needs. |
 | **Timeframes** | `1m 3m 5m 15m 30m 1h 2h 4h 1D 1W 1MO`, independent per pane. Yahoo has no 3m/2h/4h bars so those are rolled up from 1m and 1h, bucketed on local time so they align to the Indian session rather than to midnight UTC. |
 | **fx Indicators** | 14 indicators via pandas-ta — moving averages, Bollinger, Supertrend, VWAP on the chart; RSI, MACD, Stochastic, ATR, ADX, CCI, MFI, OBV in a band below. Editable periods, saved per pane. |
 | **🔔 Alerts** | Price alerts above/below a level. Fires a toast, a chime and a desktop notification. |
@@ -94,6 +94,21 @@ Two consequences of computing on the server worth knowing:
   to a full reload. A top-up is ~2.2 KB with five indicators running; eight
   panes at the 4s Zerodha rate come to about 2.2 GB/month, at 15s about 0.6 GB,
   against Render's 5 GB allowance.
+
+### Finding a symbol
+
+There are two boxes and they do different jobs, which is easy to trip over:
+
+* A **chart's symbol box** is the search. It queries the source for anything it
+  carries — typing `goldbees` finds `NSE:GOLDBEES` on Zerodha or suggests
+  `GOLDBEES.NS` on yfinance.
+* The **watchlist filter** only filters that list's own entries. If what you
+  type isn't there it offers to add it, and points you at the chart box.
+
+Kite carries about 23,000 NSE+BSE instruments. Shipping those to the browser
+would be megabytes for something you type two letters into, so the dropdown
+holds a short list and everything else is found through `/api/symbols`, merged
+in as you type.
 
 ### Watchlists and symbol spelling
 
