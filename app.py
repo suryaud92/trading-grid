@@ -17,6 +17,7 @@ from werkzeug.exceptions import HTTPException
 import auth
 import data_source as ds
 import indicators as ind
+import optionchain as oc
 import settings as app_settings
 
 # static_url_path="" so the page can use RELATIVE asset paths and therefore
@@ -131,6 +132,25 @@ def api_quotes():
     if not symbols:
         return jsonify({"quotes": {}})
     return jsonify({"source": src.key, "quotes": src.quotes(symbols)})
+
+
+# -------------------------------------------------------------- option chain ---
+
+@app.get("/api/optionchain/underlyings")
+@auth.require_admin
+def api_oc_underlyings():
+    """Every name with listed options. Comes from Kite's public instrument
+    dump, so it works before the broker session is authenticated."""
+    return jsonify({"underlyings": oc.underlyings()})
+
+
+@app.get("/api/optionchain")
+@auth.require_admin
+def api_oc_chain():
+    underlying = (request.args.get("underlying") or "NIFTY").upper()
+    expiry = request.args.get("expiry") or None
+    around = max(5, min(int(request.args.get("around", 20)), 60))
+    return jsonify(oc.chain(underlying, expiry, around))
 
 
 # ------------------------------------------------------------------ settings ---

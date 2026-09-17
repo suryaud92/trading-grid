@@ -33,6 +33,7 @@
         const saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
         if (LAYOUT_BY_ID[saved.layout]) this.state.layout = saved.layout;
         else if (LAYOUT_BY_ID[String(saved.count)]) this.state.layout = String(saved.count);
+        if (saved.view) this.state.view = saved.view;
         this.state.syncCrosshair = !!saved.syncCrosshair;
         this.state.syncSymbol = !!saved.syncSymbol;
         if (Array.isArray(saved.configs)) this.state.configs = saved.configs;
@@ -50,6 +51,7 @@
           customSymbols: this.customSymbols,
           syncCrosshair: this.state.syncCrosshair,
           syncSymbol: this.state.syncSymbol,
+          view: this.state.view,
         }));
       } catch (_) {}
     },
@@ -309,6 +311,38 @@
       this.paintFeedLabel();
     },
 
+    /* ---------------------------------------------------------- views */
+    wireViewTabs() {
+      const tabs = document.getElementById('view-tabs');
+      if (!tabs) return;
+      tabs.querySelectorAll('button').forEach((b) => {
+        b.addEventListener('click', () => this.setView(b.dataset.view));
+      });
+      this.setView(this.state.view || 'charts');
+    },
+
+    setView(view) {
+      this.state.view = view === 'options' ? 'options' : 'charts';
+      this.save();
+      const onCharts = this.state.view === 'charts';
+      document.getElementById('grid').hidden = !onCharts;
+      document.getElementById('oc-view').hidden = onCharts;
+      document.getElementById('view-tabs').querySelectorAll('button').forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.view === this.state.view));
+      });
+      /* the layout picker and sync toggles only mean anything for charts */
+      ['count-picker', 'sync-crosshair', 'sync-symbol'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = onCharts ? '' : 'none';
+      });
+      if (onCharts) {
+        OptionChain.deactivate();
+        requestAnimationFrame(() => this.panes.forEach((p) => p.resize()));
+      } else {
+        OptionChain.activate();
+      }
+    },
+
     fatal(message) {
       const box = document.getElementById('boot-error');
       box.textContent = message;
@@ -380,6 +414,8 @@
       this.renderGrid();
       this.wireStatus();
       Watchlist.wire();
+      OptionChain.wire();
+      this.wireViewTabs();
       this.paintSyncButtons();
       document.getElementById('sync-crosshair')
         .addEventListener('click', () => this.toggleSync('syncCrosshair'));

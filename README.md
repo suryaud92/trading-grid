@@ -150,6 +150,29 @@ A stored list that has somehow lost its contents is refilled from the defaults
 on load, so the drawer can never strand you with an empty list and no way back.
 The ↺ button restores everything.
 
+## Option chain
+
+A second view, next to **Charts** in the header. Calls and puts either side of
+the strike column, exactly as NSE lays it out: OI, volume, IV, LTP, change, bid
+and ask on each side. In-the-money cells are tinted, the at-the-money row is
+marked and scrolled to, and the table refreshes every five seconds.
+
+216 underlyings with listed options, every expiry Kite carries. Only the strikes
+near the money are quoted — a full chain can be 400 contracts and Kite caps a
+quote call at 500 instruments.
+
+**Implied volatility is computed here, not supplied.** Kite gives price, OI,
+volume and depth but no IV, so it is backed out of the option's own price by
+inverting Black-Scholes. Bisection rather than Newton, because deep
+out-of-the-money options have a vega near zero where Newton diverges. Verified
+by round-tripping: price an option at a known volatility, then recover that
+volatility from the price, across twelve combinations of moneyness and vol, all
+within 0.2%. Put-call parity holds exactly.
+
+**This screen needs a live Zerodha session.** yfinance has no Indian options, so
+unlike the charts there is no free fallback — without Kite connected it says so
+rather than showing an empty table.
+
 ### Pivot points
 
 Support and resistance from the **previous** period's high, low and close, held

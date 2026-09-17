@@ -24,6 +24,11 @@
 
   <button type="button" class="icon-btn" id="toggle-watchlist" title="Watchlist">☰</button>
 
+  <div class="segmented view-tabs" id="view-tabs">
+    <button type="button" data-view="charts" aria-pressed="true">Charts</button>
+    <button type="button" data-view="options" aria-pressed="false">Option chain</button>
+  </div>
+
   <div class="count-picker" role="group" aria-label="Layout">
     <span class="count-label">Layout</span>
     <div class="segmented" id="count-picker"></div>
@@ -61,6 +66,42 @@
     </div>
   </aside>
   <main class="grid" id="grid" data-layout="4"></main>
+
+  <main class="oc-view" id="oc-view" hidden>
+    <div class="oc-bar">
+      <label class="field">
+        <span>Underlying</span>
+        <select id="oc-underlying"></select>
+      </label>
+      <label class="field">
+        <span>Expiry</span>
+        <select id="oc-expiry"></select>
+      </label>
+      <div class="oc-spot">
+        <strong id="oc-spot">—</strong>
+        <span id="oc-meta"></span>
+      </div>
+      <button type="button" class="btn small" id="oc-refresh">Refresh</button>
+    </div>
+
+    <p class="status-line" id="oc-status" hidden></p>
+
+    <div class="oc-scroll">
+      <table class="oc-table">
+        <thead>
+          <tr class="oc-group">
+            <th colspan="7">CALLS</th><th class="strike">STRIKE</th><th colspan="7">PUTS</th>
+          </tr>
+          <tr>
+            <th>OI</th><th>Volume</th><th>IV</th><th>LTP</th><th>Chng</th><th>Bid</th><th>Ask</th>
+            <th class="strike"></th>
+            <th>Bid</th><th>Ask</th><th>Chng</th><th>LTP</th><th>IV</th><th>Volume</th><th>OI</th>
+          </tr>
+        </thead>
+        <tbody id="oc-body"></tbody>
+      </table>
+    </div>
+  </main>
 </div>
 
 <div class="boot-error" id="boot-error" hidden></div>
@@ -170,6 +211,7 @@
 <script src="js/feeds.js"></script>
 <script src="js/pane.js"></script>
 <script src="js/watchlist.js"></script>
+<script src="js/optionchain.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/app.js"></script>
 <script type="module" src="js/auth.js"></script>
