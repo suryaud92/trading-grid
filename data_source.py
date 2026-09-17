@@ -264,9 +264,14 @@ def resample_candles(rows, period, tz_offset_min=0):
 # Free and always available. Delayed, and Yahoo is unofficial.
 # ==========================================================================
 
+# How far back to ask Yahoo for each interval. These sit at (or just under)
+# Yahoo's own ceilings: 7 days for 1m, 60 days for the other intraday bars,
+# 730 days for hourly, unlimited for daily and longer. Daily is held at 10y
+# rather than max because every pane refetch would otherwise drag decades of
+# bars through a 0.1 CPU instance for no visible benefit.
 YF_PERIOD = {
-    "1m": "5d", "2m": "5d", "5m": "1mo", "15m": "1mo",
-    "30m": "2mo", "60m": "6mo", "1d": "2y", "1wk": "10y", "1mo": "max",
+    "1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d",
+    "30m": "60d", "60m": "730d", "1d": "10y", "1wk": "max", "1mo": "max",
 }
 # our timeframe id -> yahoo's. Note "1m" is a minute and "1M" is a month.
 YF_INTERVAL = {"1h": "60m", "1w": "1wk", "1M": "1mo"}

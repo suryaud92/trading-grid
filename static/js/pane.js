@@ -76,6 +76,8 @@
       this.markerApi = null;       // candlestick pattern arrows
       this.decimals = 2;
       this.reqToken = 0;
+      this.historyLimit = 600;     // grows as you scroll back
+      this.historyExhausted = false;
       this.build();
     }
 
@@ -226,6 +228,13 @@
         height: this.chartEl.clientHeight || 200,
       });
 
+      /* Charts open with 600 bars so they appear quickly. Scroll back to the
+       * start and fetch a wider window, doubling until the source runs out. */
+      this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (!range || !this.candles.length) return;
+        if (range.from < 8) this.loadMoreHistory();
+      });
+
       this.chart.subscribeCrosshairMove((param) => {
         if (this._echo || !this.ctx.onCrosshair) return;
         this.ctx.onCrosshair(this, param && param.time != null ? param.time : null);
@@ -273,6 +282,8 @@
       this.refPrice = null;
       this.lastBar = null;
       this.candles = [];
+      this.historyLimit = 600;
+      this.historyExhausted = false;
       this.tSym.textContent = this.config.symbol;
       this.tPrice.textContent = '—';
       this.tChg.textContent = '—';
@@ -282,7 +293,7 @@
 
       try {
         const res = await Feeds.api.candles(
-          this.config.source, this.config.symbol, this.config.timeframe, 600,
+          this.config.source, this.config.symbol, this.config.timeframe, this.historyLimit,
           Indicators.spec(this.config.indicators)
         );
         if (token !== this.reqToken) return;
@@ -380,6 +391,35 @@
      * about 4 GB a month — enough to blow a free host's bandwidth allowance
      * for the sake of data we already had. `full` forces a complete re-pull,
      * used when the tab comes back into view. */
+    /** Widen the window and keep the view where the user left it. */
+    async loadMoreHistory() {
+      if (this._loadingMore || this.historyExhausted || !this.chart) return;
+      const next = Math.min(this.historyLimit * 2, 5000);
+      if (next === this.historyLimit) { this.historyExhausted = true; return; }
+
+      this._loadingMore = true;
+      const before = this.candles.length;
+      const view = this.chart.timeScale().getVisibleLogicalRange();
+      this.historyLimit = next;
+      try {
+        await this.refreshHistory(true);
+        const added = this.candles.length - before;
+        if (added <= 0) {
+          this.historyExhausted = true;      // the source has nothing older
+        } else if (view) {
+          /* prepending shifts every index, so shift the viewport to match or
+           * the chart jumps to a different stretch of history under you */
+          this.chart.timeScale().setVisibleLogicalRange({
+            from: view.from + added, to: view.to + added,
+          });
+        }
+      } catch (_) {
+        this.historyExhausted = true;
+      } finally {
+        this._loadingMore = false;
+      }
+    }
+
     async refreshHistory(full) {
       const token = this.reqToken;
       /* Volume Profile and FVG describe the whole window, so they barely move
@@ -389,7 +429,7 @@
       const withOverlays = !!full || this._tick % 10 === 0;
       try {
         const res = await Feeds.api.candles(
-          this.config.source, this.config.symbol, this.config.timeframe, full ? 600 : 3,
+          this.config.source, this.config.symbol, this.config.timeframe, full ? this.historyLimit : 3,
           Indicators.spec(this.config.indicators, withOverlays)
         );
         if (token !== this.reqToken || !res.candles || !res.candles.length) return;
@@ -401,7 +441,7 @@
           res.candles.forEach((c) => byTime.set(c.time, c));   // newer bar wins
           this.candles = Array.from(byTime.values())
             .sort((a, b) => a.time - b.time)
-            .slice(-1500);
+            .slice(-5200);
         }
 
         this.series.setData(this.chartData());
@@ -470,7 +510,7 @@
         l.data.forEach((p) => byTime.set(p.time, p));
         existing.data = Array.from(byTime.values())
           .sort((a, b) => a.time - b.time)
-          .slice(-1500);
+          .slice(-5200);
         Object.assign(existing, { color: l.color, style: l.style, width: l.width,
                                   pane: l.pane, guides: l.guides, name: l.name });
       });

@@ -95,6 +95,30 @@ Two consequences of computing on the server worth knowing:
   panes at the 4s Zerodha rate come to about 2.2 GB/month, at 15s about 0.6 GB,
   against Render's 5 GB allowance.
 
+### How much history you get
+
+A chart opens with **600 bars** so it appears quickly, then **loads more as you
+scroll back**, doubling the window each time until the source runs out. Nothing
+extra is fetched unless you actually scroll, so the initial load and the
+bandwidth budget are unaffected.
+
+The ceiling is whatever the data source will give. For yfinance that is Yahoo's
+own limit per interval, and the lookback windows now sit at those limits:
+
+| Timeframe | Bars available | Reaches back to |
+|---|---|---|
+| 1m | ~2,000 | 7 days (Yahoo's cap) |
+| 5m | ~4,300 | 60 days |
+| 15m | ~1,400 | 60 days |
+| 1h | 5,000+ | ~3 years |
+| 1D | ~2,500 | 10 years |
+| 1W | ~1,600 | 1995 |
+| 1MO | ~370 | 1995 |
+
+A request is clamped to 5,000 bars server-side. Daily is held at 10 years
+rather than Yahoo's full history because every pane refresh would otherwise
+drag decades of bars through a 0.1 CPU instance for no visible gain.
+
 ### Finding a symbol
 
 There are two boxes and they do different jobs, which is easy to trip over:
