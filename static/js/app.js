@@ -184,23 +184,41 @@
       if (s2) s2.classList.toggle('on', this.state.syncSymbol);
     },
 
-    /** Broadcast one pane's crosshair time to the others. */
+    /** Broadcast one pane's crosshair time to the others.
+     *
+     * Only the TIME is meaningful across charts — two symbols have unrelated
+     * price scales. Each pane puts its horizontal line on its own close at
+     * that moment, so you can read where every symbol stood at that instant
+     * rather than at a price borrowed from another chart. */
     broadcastCrosshair(from, time) {
       if (!this.state.syncCrosshair) return;
+      const raw = time == null ? null : time - from.tzShift;
+
       this.panes.forEach((p) => {
         if (p === from || !p.chart || !p.series) return;
         p._echo = true;
         try {
-          if (time == null) p.chart.clearCrosshairPosition();
-          else {
-            const shifted = time - from.tzShift + p.tzShift;
-            const bar = p.series.dataByIndex
-              ? null : null;
-            p.chart.setCrosshairPosition(p.lastPrice || 0, shifted, p.series);
+          if (raw == null) {
+            p.chart.clearCrosshairPosition();
+          } else {
+            p.chart.setCrosshairPosition(this.priceAt(p, raw), raw + p.tzShift, p.series);
           }
         } catch (_) {}
         p._echo = false;
       });
+    },
+
+    /** That pane's close at (or just before) a given moment. */
+    priceAt(pane, rawTime) {
+      const bars = pane.candles;
+      if (!bars || !bars.length) return pane.lastPrice || 0;
+      let lo = 0, hi = bars.length - 1, best = null;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (bars[mid].time <= rawTime) { best = bars[mid]; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      return (best || bars[0]).close;
     },
 
     /** Load a symbol into the active pane, or all panes when symbol sync is on. */
