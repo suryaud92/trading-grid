@@ -841,11 +841,22 @@ body {
   border-bottom: 1px solid var(--line); z-index: 2;
 }
 .oc-table thead tr.oc-group th { top: 0; text-align: center; font-size: 10.5px; color: var(--text); }
-.oc-table thead tr:not(.oc-group) th { top: 25px; }
+/* The second header row sits directly under the first. Its offset is measured
+   at render time rather than hardcoded: guessing the height left a sliver
+   where body rows showed through as they scrolled past. */
+.oc-table thead tr:not(.oc-group) th { top: var(--oc-head1, 26px); }
+
 .oc-table th.strike, .oc-table td.strike {
   text-align: center; font-weight: 700; color: var(--text);
-  background: var(--bg-head); position: sticky; left: 0; z-index: 1;
+  background: var(--bg-head); position: sticky; left: 0;
 }
+/* Layering, in the order things must cover each other. The strike column is
+   sticky horizontally AND the header is sticky vertically, so the header's
+   strike cell is the corner and has to sit above both. Without this it loses
+   to `.oc-table td.strike` on specificity and the body scrolls over it. */
+.oc-table tbody td.strike { z-index: 1; }
+.oc-table thead th        { z-index: 2; }
+.oc-table thead th.strike { z-index: 3; }
 .oc-table tbody tr:hover td { background: rgba(79, 140, 255, .08); }
 .oc-table td.itm { background: rgba(234, 179, 8, .07); }
 .oc-table td.num { font-weight: 650; color: var(--text); }

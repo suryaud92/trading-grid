@@ -154,10 +154,24 @@
         body.appendChild(tr);
       });
 
+      this.measureHeader();
+
       if (!this._scrolledOnce && atm != null) {
         this._scrolledOnce = true;
         const row = body.querySelector('.atm');
         if (row) row.scrollIntoView({ block: 'center' });
+      }
+    },
+
+    /* The two header rows are both sticky; the second must sit exactly under
+     * the first. Measure rather than guess — a wrong offset leaves a sliver
+     * that scrolling rows show through. */
+    measureHeader() {
+      const first = document.querySelector('.oc-table thead tr.oc-group');
+      if (!first) return;
+      const h = Math.ceil(first.getBoundingClientRect().height);
+      if (h > 0) {
+        document.documentElement.style.setProperty('--oc-head1', h + 'px');
       }
     },
 
@@ -177,6 +191,7 @@
         this.refresh();
       });
       document.getElementById('oc-refresh').addEventListener('click', () => this.refresh());
+      window.addEventListener('resize', () => this.measureHeader());
     },
   };
 
