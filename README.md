@@ -169,6 +169,18 @@ by round-tripping: price an option at a known volatility, then recover that
 volatility from the price, across twelve combinations of moneyness and vol, all
 within 0.2%. Put-call parity holds exactly.
 
+**Controls.** The underlying is a text box backed by a datalist — 216 names is
+too many for a plain dropdown, so type to narrow it. The strike selector jumps
+the window anywhere in the chain, and "Rows ±" sets how many strikes either
+side to quote.
+
+**Untraded contracts are dimmed, and get no IV.** On a thin chain most strikes
+never trade and their "last price" is a stale print — we saw NIFTYNXT50 calls
+quoted at nearly three times their intrinsic value, which Black-Scholes turned
+into a confident, meaningless 80% volatility. IV is therefore taken from the
+live bid/ask midpoint when there is a real two-sided market, from the last
+trade only if something actually traded, and otherwise not published at all.
+
 **This screen needs a live Zerodha session.** yfinance has no Indian options, so
 unlike the charts there is no free fallback — without Kite connected it says so
 rather than showing an empty table.

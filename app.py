@@ -150,7 +150,9 @@ def api_oc_chain():
     underlying = (request.args.get("underlying") or "NIFTY").upper()
     expiry = request.args.get("expiry") or None
     around = max(5, min(int(request.args.get("around", 20)), 60))
-    return jsonify(oc.chain(underlying, expiry, around))
+    center = request.args.get("center")
+    center = float(center) if center else None
+    return jsonify(oc.chain(underlying, expiry, around, center))
 
 
 # ------------------------------------------------------------------ settings ---

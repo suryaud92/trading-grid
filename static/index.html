@@ -71,11 +71,21 @@
     <div class="oc-bar">
       <label class="field">
         <span>Underlying</span>
-        <select id="oc-underlying"></select>
+        <input id="oc-underlying" list="oc-underlying-list" autocomplete="off"
+               spellcheck="false" placeholder="NIFTY">
+        <datalist id="oc-underlying-list"></datalist>
       </label>
       <label class="field">
         <span>Expiry</span>
         <select id="oc-expiry"></select>
+      </label>
+      <label class="field">
+        <span>Strike</span>
+        <select id="oc-strike"></select>
+      </label>
+      <label class="field narrow">
+        <span>Rows ±</span>
+        <input type="number" id="oc-around" min="5" max="60" step="5" value="20">
       </label>
       <div class="oc-spot">
         <strong id="oc-spot">—</strong>

@@ -116,7 +116,7 @@ def _spot_for(underlying):
     return None, candidate
 
 
-def chain(underlying, expiry=None, around=25):
+def chain(underlying, expiry=None, around=25, center=None):
     tree = _fno().get(underlying)
     if not tree:
         raise ValueError(f"no option contracts for '{underlying}'")
@@ -128,12 +128,16 @@ def chain(underlying, expiry=None, around=25):
 
     spot, spot_key = _spot_for(underlying)
 
-    # only quote the strikes near the money: a full chain can be 400 contracts
-    if spot:
-        atm = min(strikes, key=lambda s: abs(s - spot))
-        at = strikes.index(atm)
-        lo = max(0, at - around)
-        strikes = strikes[lo:at + around + 1]
+    all_strikes = list(strikes)
+
+    # Only quote strikes near the middle: a full chain runs to 400 contracts
+    # and Kite caps a quote call at 500 instruments. `center` lets the user
+    # pin the window to a strike of their choosing instead of the money.
+    anchor = center if center in strikes else (
+        min(strikes, key=lambda s: abs(s - spot)) if spot else None)
+    if anchor is not None:
+        at = strikes.index(anchor)
+        strikes = strikes[max(0, at - around):at + around + 1]
     else:
         strikes = strikes[:2 * around + 1]
 
@@ -166,15 +170,42 @@ def chain(underlying, expiry=None, around=25):
         buy = (depth.get("buy") or [{}])[0]
         sell = (depth.get("sell") or [{}])[0]
         ltp = q.get("last_price")
+        bid, ask = buy.get("price"), sell.get("price")
+        oi, vol = q.get("oi") or 0, q.get("volume") or 0
+
+        # Which price is worth believing?
+        #
+        # On an illiquid chain most contracts never trade, and their "last
+        # price" is a stale print from days ago — we saw calls quoted at three
+        # times their intrinsic value. Feeding that to Black-Scholes produces a
+        # confident, meaningless 80% IV. So prefer the live mid when there is a
+        # real two-sided market, fall back to the last trade only if something
+        # actually traded, and otherwise decline to publish an IV at all.
+        price, basis = None, None
+        if bid and ask and ask > bid:
+            spread = (ask - bid) / ((ask + bid) / 2)
+            if spread < 0.6:
+                price, basis = (bid + ask) / 2, "mid"
+        if price is None and ltp and (vol > 0 or oi > 0):
+            price, basis = ltp, "ltp"
+
+        iv = implied_vol(price, spot, strike, years, is_call) if (spot and price) else None
+        # a genuine option rarely trades above 200% vol; beyond that the input
+        # is junk rather than the market being excited
+        if iv is not None and iv > 200:
+            iv, basis = None, None
+
         return {
             "symbol": key,
             "oi": q.get("oi"),
             "volume": q.get("volume"),
             "ltp": ltp,
             "change": q.get("net_change"),
-            "bid": buy.get("price"), "bidQty": buy.get("quantity"),
-            "ask": sell.get("price"), "askQty": sell.get("quantity"),
-            "iv": implied_vol(ltp, spot, strike, years, is_call) if spot else None,
+            "bid": bid, "bidQty": buy.get("quantity"),
+            "ask": ask, "askQty": sell.get("quantity"),
+            "iv": iv,
+            "ivFrom": basis,
+            "traded": bool(vol or oi),
         }
 
     rows = []
@@ -193,6 +224,8 @@ def chain(underlying, expiry=None, around=25):
         "expiry": expiry,
         "expiries": exps,
         "rows": rows,
+        "strikes": all_strikes,
+        "center": anchor,
         "daysToExpiry": round(years * 365, 2),
         "asOf": int(datetime.datetime.now().timestamp()),
     }

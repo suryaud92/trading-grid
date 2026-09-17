@@ -11,7 +11,7 @@
 
   const OptionChain = {
     underlyings: [],
-    state: { underlying: 'NIFTY', expiry: null, around: 20 },
+    state: { underlying: 'NIFTY', expiry: null, around: 20, center: null },
     data: null,
     timer: null,
     mounted: false,
@@ -55,20 +55,22 @@
     },
 
     renderControls() {
-      const uSel = document.getElementById('oc-underlying');
-      if (uSel.options.length !== this.underlyings.length) {
-        uSel.innerHTML = '';
+      /* 216 underlyings is too many for a plain dropdown, so it is a text box
+       * backed by a datalist: type to narrow, or open it and scroll. */
+      const list = document.getElementById('oc-underlying-list');
+      if (list.options.length !== this.underlyings.length) {
+        list.innerHTML = '';
         this.underlyings.forEach((u) => {
           const o = document.createElement('option');
           o.value = u.name;
-          o.textContent = u.name;
-          uSel.appendChild(o);
+          list.appendChild(o);
         });
       }
       if (!this.underlyings.some((u) => u.name === this.state.underlying)) {
         this.state.underlying = (this.underlyings[0] || {}).name || 'NIFTY';
       }
-      uSel.value = this.state.underlying;
+      document.getElementById('oc-underlying').value = this.state.underlying;
+      document.getElementById('oc-around').value = this.state.around;
 
       const eSel = document.getElementById('oc-expiry');
       const found = this.underlyings.find((u) => u.name === this.state.underlying);
@@ -88,7 +90,8 @@
       if (!quiet) this.status('Loading chain…');
       const q = '/api/optionchain?underlying=' + encodeURIComponent(this.state.underlying)
         + (this.state.expiry ? '&expiry=' + encodeURIComponent(this.state.expiry) : '')
-        + '&around=' + this.state.around;
+        + '&around=' + this.state.around
+        + (this.state.center != null ? '&center=' + this.state.center : '');
       try {
         this.data = await Feeds.api.json(q);
         this.status('');
@@ -102,6 +105,8 @@
       const d = this.data;
       const body = document.getElementById('oc-body');
       const spot = d.spot;
+
+      this.renderStrikes(d);
 
       document.getElementById('oc-spot').textContent = spot == null ? '—'
         : d.underlying + '  ' + spot.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -121,7 +126,8 @@
       body.innerHTML = '';
       d.rows.forEach((r) => {
         const tr = document.createElement('tr');
-        if (r.strike === atm) tr.className = 'atm';
+        const traded = (r.call && r.call.traded) || (r.put && r.put.traded);
+        tr.className = (r.strike === atm ? 'atm' : '') + (traded ? '' : ' dead');
         const c = r.call || {}, p = r.put || {};
         /* calls are in the money below spot, puts above — NSE shades it the
          * same way and it is how you read the chain at a glance */
@@ -175,13 +181,55 @@
       }
     },
 
+    /** Every strike for this expiry, so you can jump anywhere in the chain. */
+    renderStrikes(d) {
+      const sel = document.getElementById('oc-strike');
+      const strikes = d.strikes || [];
+      const want = String(this.state.center != null ? this.state.center : (d.center || ''));
+      if (sel.dataset.key !== d.underlying + d.expiry) {
+        sel.dataset.key = d.underlying + d.expiry;
+        sel.innerHTML = '';
+        const auto = document.createElement('option');
+        auto.value = '';
+        auto.textContent = 'At the money';
+        sel.appendChild(auto);
+        strikes.forEach((k) => {
+          const o = document.createElement('option');
+          o.value = String(k);
+          o.textContent = k.toLocaleString(undefined, { maximumFractionDigits: 2 });
+          sel.appendChild(o);
+        });
+      }
+      sel.value = this.state.center != null ? want : '';
+    },
+
     wire() {
       document.getElementById('oc-underlying').addEventListener('change', (e) => {
-        this.state.underlying = e.target.value;
+        const typed = (e.target.value || '').trim().toUpperCase();
+        const match = this.underlyings.find((u) => u.name === typed);
+        if (!match) {
+          this.status('No listed options for "' + typed + '".', true);
+          e.target.value = this.state.underlying;
+          return;
+        }
+        this.state.underlying = match.name;
         this.state.expiry = null;
+        this.state.center = null;
         this._scrolledOnce = false;
         this.save();
         this.renderControls();
+        this.refresh();
+      });
+      document.getElementById('oc-strike').addEventListener('change', (e) => {
+        this.state.center = e.target.value ? Number(e.target.value) : null;
+        this._scrolledOnce = false;
+        this.save();
+        this.refresh();
+      });
+      document.getElementById('oc-around').addEventListener('change', (e) => {
+        this.state.around = Math.max(5, Math.min(Number(e.target.value) || 20, 60));
+        e.target.value = this.state.around;
+        this.save();
         this.refresh();
       });
       document.getElementById('oc-expiry').addEventListener('change', (e) => {

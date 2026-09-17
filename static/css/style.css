@@ -831,7 +831,17 @@ body {
   flex: 1 1 auto; min-height: 0; overflow: auto;
   border: 1px solid var(--line); border-radius: 10px; background: var(--bg-elev);
 }
-.oc-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+/* `border-collapse: collapse` breaks position:sticky on table cells — with
+   collapsed borders the table paints them itself and per-cell z-index stops
+   being honoured, which let the strike column ride over the header. Separate
+   borders with zero spacing is the documented workaround; every border below
+   is drawn on the cell. */
+.oc-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
 .oc-table th, .oc-table td {
   padding: 5px 9px; font-size: 11.5px; text-align: right; white-space: nowrap;
 }
@@ -857,7 +867,10 @@ body {
 .oc-table tbody td.strike { z-index: 1; }
 .oc-table thead th        { z-index: 2; }
 .oc-table thead th.strike { z-index: 3; }
+.oc-table tbody td { border-bottom: 1px solid var(--line-soft); }
 .oc-table tbody tr:hover td { background: rgba(79, 140, 255, .08); }
+/* nothing traded here today: no open interest and no volume */
+.oc-table tbody tr.dead td { opacity: .38; }
 .oc-table td.itm { background: rgba(234, 179, 8, .07); }
 .oc-table td.num { font-weight: 650; color: var(--text); }
 .oc-table td.up { color: var(--up); }
@@ -869,3 +882,10 @@ body {
   .oc-table th, .oc-table td { padding: 4px 6px; font-size: 10.5px; }
   .oc-spot { margin-left: 0; text-align: left; width: 100%; }
 }
+
+.oc-bar .field input {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); font: inherit; font-size: 12.5px; padding: 6px 9px;
+}
+.oc-bar .field input:focus { outline: none; border-color: var(--accent); }
+.oc-bar .field.narrow input { width: 70px; }
