@@ -101,6 +101,11 @@
       return !!s && s.pane === 'overlay';
     },
 
+    isMarker(id) {
+      const s = this.byId[id];
+      return !!s && s.pane === 'markers';
+    },
+
     /* Bands stack vertically, so more than a few makes each unreadable in a
      * small grid pane. Overlays have no such limit. */
     MAX_BANDS: 3,
@@ -111,6 +116,7 @@
       let bands = 0;
       (list || []).forEach((e) => {
         if (!e || !this.byId[e.id]) return;
+        if (this.isMarker(e.id)) { out.push({ id: e.id, params: [] }); return; }
         if (this.isSub(e.id)) {
           if (bands >= this.MAX_BANDS) return;
           bands += 1;

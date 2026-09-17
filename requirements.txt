@@ -3,6 +3,7 @@ requests>=2.31
 yfinance>=0.2.54
 pandas>=2.0
 pandas-ta-classic>=0.8
+TA-Lib>=0.6
 
 # Zerodha (Kite Connect) source
 kiteconnect>=5.0

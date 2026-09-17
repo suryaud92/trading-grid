@@ -3,21 +3,38 @@
 (function (global) {
   'use strict';
 
-  const COUNTS = [1, 2, 4, 6, 8];
-  const STORE_KEY = 'ltg.state.v4';
+  /* A layout is more than a count now: 2 and 2v both show two charts but
+   * side by side vs stacked, and 3 is one anchor plus two companions. */
+  const LAYOUTS = [
+    { id: '1', label: '1', n: 1 },
+    { id: '2', label: '2', n: 2 },
+    { id: '2v', label: '2\u2195', n: 2 },
+    { id: '3', label: '3', n: 3 },
+    { id: '4', label: '4', n: 4 },
+    { id: '6', label: '6', n: 6 },
+    { id: '8', label: '8', n: 8 },
+  ];
+  const LAYOUT_BY_ID = {};
+  LAYOUTS.forEach((l) => { LAYOUT_BY_ID[l.id] = l; });
+  const STORE_KEY = 'ltg.state.v5';
   const MAX_PANES = 8;
 
   const App = {
     sources: {},
     customSymbols: {},
     panes: [],
-    state: { count: 4, configs: [] },
+    state: { layout: '4', configs: [], syncCrosshair: false, syncSymbol: false },
+    activeIndex: 0,
+    maximised: null,
 
     /* --------------------------------------------------------- storage */
     load() {
       try {
         const saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
-        if (COUNTS.indexOf(saved.count) !== -1) this.state.count = saved.count;
+        if (LAYOUT_BY_ID[saved.layout]) this.state.layout = saved.layout;
+        else if (LAYOUT_BY_ID[String(saved.count)]) this.state.layout = String(saved.count);
+        this.state.syncCrosshair = !!saved.syncCrosshair;
+        this.state.syncSymbol = !!saved.syncSymbol;
         if (Array.isArray(saved.configs)) this.state.configs = saved.configs;
         if (saved.customSymbols && typeof saved.customSymbols === 'object') {
           this.customSymbols = saved.customSymbols;
@@ -28,9 +45,11 @@
     save() {
       try {
         localStorage.setItem(STORE_KEY, JSON.stringify({
-          count: this.state.count,
+          layout: this.state.layout,
           configs: this.state.configs,
           customSymbols: this.customSymbols,
+          syncCrosshair: this.state.syncCrosshair,
+          syncSymbol: this.state.syncSymbol,
         }));
       } catch (_) {}
     },
@@ -97,33 +116,114 @@
     },
 
     /* ------------------------------------------------------------ grid */
+    get paneCount() { return (LAYOUT_BY_ID[this.state.layout] || LAYOUTS[4]).n; },
+
     renderCountPicker() {
       const host = document.getElementById('count-picker');
       host.innerHTML = '';
-      COUNTS.forEach((n) => {
+      LAYOUTS.forEach((l) => {
         const b = document.createElement('button');
         b.type = 'button';
-        b.textContent = String(n);
-        b.title = n + ' chart' + (n > 1 ? 's' : '');
-        b.setAttribute('aria-pressed', String(n === this.state.count));
-        b.addEventListener('click', () => this.setCount(n));
+        b.textContent = l.label;
+        b.title = l.n + ' chart' + (l.n > 1 ? 's' : '')
+          + (l.id === '2v' ? ', stacked' : l.id === '3' ? ', one large plus two' : '');
+        b.setAttribute('aria-pressed', String(l.id === this.state.layout));
+        b.addEventListener('click', () => this.setLayout(l.id));
         host.appendChild(b);
       });
     },
 
-    setCount(n) {
-      if (COUNTS.indexOf(n) === -1 || n === this.state.count) return;
-      this.state.count = n;
+    setLayout(id) {
+      if (!LAYOUT_BY_ID[id] || id === this.state.layout) return;
+      this.state.layout = id;
+      this.clearMaximised();
       this.save();
       this.renderCountPicker();
       this.renderGrid();
     },
 
+    /* ------------------------------------------------ focus & maximise */
+    setActive(index) {
+      this.activeIndex = index;
+      this.panes.forEach((p, i) => p.root.classList.toggle('active', i === index));
+    },
+
+    clearMaximised() {
+      const grid = document.getElementById('grid');
+      grid.classList.remove('has-max');
+      this.panes.forEach((p) => p.root.classList.remove('maximised'));
+      this.maximised = null;
+    },
+
+    toggleMaximise(pane) {
+      const grid = document.getElementById('grid');
+      if (this.maximised === pane) this.clearMaximised();
+      else {
+        this.clearMaximised();
+        this.maximised = pane;
+        grid.classList.add('has-max');
+        pane.root.classList.add('maximised');
+      }
+      requestAnimationFrame(() => this.panes.forEach((p) => p.resize()));
+    },
+
+    /* ------------------------------------------------------ synchronise */
+    toggleSync(which) {
+      this.state[which] = !this.state[which];
+      this.save();
+      this.paintSyncButtons();
+      if (which === 'syncCrosshair' && !this.state.syncCrosshair) {
+        this.panes.forEach((p) => { try { p.chart.clearCrosshairPosition(); } catch (_) {} });
+      }
+    },
+
+    paintSyncButtons() {
+      const c = document.getElementById('sync-crosshair');
+      const s2 = document.getElementById('sync-symbol');
+      if (c) c.classList.toggle('on', this.state.syncCrosshair);
+      if (s2) s2.classList.toggle('on', this.state.syncSymbol);
+    },
+
+    /** Broadcast one pane's crosshair time to the others. */
+    broadcastCrosshair(from, time) {
+      if (!this.state.syncCrosshair) return;
+      this.panes.forEach((p) => {
+        if (p === from || !p.chart || !p.series) return;
+        p._echo = true;
+        try {
+          if (time == null) p.chart.clearCrosshairPosition();
+          else {
+            const shifted = time - from.tzShift + p.tzShift;
+            const bar = p.series.dataByIndex
+              ? null : null;
+            p.chart.setCrosshairPosition(p.lastPrice || 0, shifted, p.series);
+          }
+        } catch (_) {}
+        p._echo = false;
+      });
+    },
+
+    /** Load a symbol into the active pane, or all panes when symbol sync is on. */
+    loadSymbol(symbol) {
+      if (!symbol) return;
+      const targets = this.state.syncSymbol
+        ? this.panes
+        : [this.panes[this.activeIndex] || this.panes[0]];
+      targets.forEach((p) => {
+        if (!p) return;
+        if (!this.symbolsFor(p.source.key).some((s) => s.symbol === symbol)) {
+          this.addCustomSymbol(p.source.key, symbol);
+        }
+        p.apply({ symbol: symbol });
+      });
+    },
+
     renderGrid() {
       const grid = document.getElementById('grid');
-      grid.dataset.count = String(this.state.count);
-      while (this.panes.length > this.state.count) this.panes.pop().destroy();
-      for (let i = this.panes.length; i < this.state.count; i++) {
+      grid.dataset.layout = this.state.layout;
+      const count = this.paneCount;
+      while (this.panes.length > count) this.panes.pop().destroy();
+      for (let i = this.panes.length; i < count; i++) {
         const pane = new Pane(i, this.state.configs[i], {
           sources: this.sources,
           symbolsFor: (k) => this.symbolsFor(k),
@@ -131,11 +231,20 @@
           onChange: (idx, cfg) => {
             this.state.configs[idx] = Object.assign({}, cfg);
             this.save();
+            if (this.state.syncSymbol && !this._syncing) {
+              this._syncing = true;
+              this.panes.forEach((p, i) => { if (i !== idx) p.apply({ symbol: cfg.symbol }); });
+              this._syncing = false;
+            }
           },
+          onFocus: (idx) => this.setActive(idx),
+          onMaximise: (pane) => this.toggleMaximise(pane),
+          onCrosshair: (pane, time) => this.broadcastCrosshair(pane, time),
         });
         this.panes.push(pane);
         pane.mount(grid);
       }
+      this.setActive(Math.min(this.activeIndex, this.panes.length - 1));
       requestAnimationFrame(() => this.panes.forEach((p) => p.resize()));
     },
 
@@ -202,6 +311,12 @@
       this.renderCountPicker();
       this.renderGrid();
       this.wireStatus();
+      Watchlist.wire();
+      this.paintSyncButtons();
+      document.getElementById('sync-crosshair')
+        .addEventListener('click', () => this.toggleSync('syncCrosshair'));
+      document.getElementById('sync-symbol')
+        .addEventListener('click', () => this.toggleSync('syncSymbol'));
 
       document.addEventListener('keydown', (e) => {
         if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -210,8 +325,11 @@
         const settings = document.getElementById('settings');
         if (settings && !settings.hidden) return;
         if (global.Popover && Popover.isOpen()) return;
-        const n = parseInt(e.key, 10);
-        if (COUNTS.indexOf(n) !== -1) this.setCount(n);
+        if (e.key.toLowerCase() === 'f' && this.panes[this.activeIndex]) {
+          this.toggleMaximise(this.panes[this.activeIndex]);
+          return;
+        }
+        if (LAYOUT_BY_ID[e.key]) this.setLayout(e.key);
       });
 
       window.addEventListener('resize', () => this.panes.forEach((p) => p.resize()));

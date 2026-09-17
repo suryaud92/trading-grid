@@ -22,9 +22,16 @@
     <h1>Live Trading Grid</h1>
   </div>
 
-  <div class="count-picker" role="group" aria-label="Number of charts">
-    <span class="count-label">Charts</span>
+  <button type="button" class="icon-btn" id="toggle-watchlist" title="Watchlist">☰</button>
+
+  <div class="count-picker" role="group" aria-label="Layout">
+    <span class="count-label">Layout</span>
     <div class="segmented" id="count-picker"></div>
+  </div>
+
+  <div class="sync-toggles">
+    <button type="button" class="pill toggle" id="sync-crosshair" title="Sync the crosshair across charts">✛ Crosshair</button>
+    <button type="button" class="pill toggle" id="sync-symbol" title="Change the symbol on every chart at once">🔗 Symbol</button>
   </div>
 
   <div class="status">
@@ -39,7 +46,21 @@
   </div>
 </header>
 
-<main class="grid" id="grid" data-count="4"></main>
+<div class="workspace">
+  <aside class="watchlist" id="watchlist" hidden>
+    <div class="wl-head">
+      <div class="wl-tabs" id="wl-tabs"></div>
+      <button type="button" class="icon-btn" id="wl-close" aria-label="Close watchlist">✕</button>
+    </div>
+    <input type="search" class="wl-search" id="wl-search" placeholder="Filter…" autocomplete="off">
+    <div class="wl-items" id="wl-items"></div>
+    <div class="wl-foot">
+      <input type="text" id="wl-add" placeholder="Add symbol to this list" autocomplete="off" spellcheck="false">
+      <button type="button" class="btn small" id="wl-add-btn">Add</button>
+    </div>
+  </aside>
+  <main class="grid" id="grid" data-layout="4"></main>
+</div>
 
 <div class="boot-error" id="boot-error" hidden></div>
 
@@ -147,6 +168,7 @@
 <script src="js/alerts.js"></script>
 <script src="js/feeds.js"></script>
 <script src="js/pane.js"></script>
+<script src="js/watchlist.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/app.js"></script>
 <script type="module" src="js/auth.js"></script>

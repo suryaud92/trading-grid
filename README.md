@@ -24,9 +24,12 @@ says so out loud. Never expose that configuration to the internet.
 
 | | |
 |---|---|
-| **Charts 1 / 2 / 4 / 6 / 8** | 1 = full screen, 2 = side by side, 4 = 2×2, 6 = 3×2, 8 = 4×2. Also bound to the number keys. |
+| **Layout 1 / 2 / 2↕ / 3 / 4 / 6 / 8** | 2 side by side, 2↕ stacked, 3 as one large plus two companions, then 2×2, 3×2, 4×2. Bound to the matching keys. |
+| **⛶ Maximise** | Blow one chart up full-screen and back. Keyboard: `F` on the active chart. |
+| **☰ Watchlist** | Categorised lists (Indian, US tech, Crypto & commodities) in a side drawer, editable. Clicking loads into the chart you last clicked — or into every chart when symbol sync is on. |
+| **✛ Crosshair / 🔗 Symbol** | Scrub time across every chart at once, and change them all to one ticker together. |
 | **Symbol search** | Type in the symbol box and matches appear as you go, by ticker *or* company name ("tata" finds Tata Steel, Tata Motors and TCS). Anything not in the list can be entered as typed and is remembered. |
-| **Timeframes** | `1m 5m 15m 30m 1h 1D 1W 1MO` (Kite adds `3m` and `10m`), independent per pane. |
+| **Timeframes** | `1m 3m 5m 15m 30m 1h 2h 4h 1D 1W 1MO`, independent per pane. Yahoo has no 3m/2h/4h bars so those are rolled up from 1m and 1h, bucketed on local time so they align to the Indian session rather than to midnight UTC. |
 | **fx Indicators** | 14 indicators via pandas-ta — moving averages, Bollinger, Supertrend, VWAP on the chart; RSI, MACD, Stochastic, ATR, ADX, CCI, MFI, OBV in a band below. Editable periods, saved per pane. |
 | **🔔 Alerts** | Price alerts above/below a level. Fires a toast, a chime and a desktop notification. |
 | **Ticker bar** | Flashes green on an uptick, red on a downtick. |
@@ -91,6 +94,20 @@ Two consequences of computing on the server worth knowing:
   to a full reload. A top-up is ~2.2 KB with five indicators running; eight
   panes at the 4s Zerodha rate come to about 2.2 GB/month, at 15s about 0.6 GB,
   against Render's 5 GB allowance.
+
+### Candlestick patterns
+
+All **61 TA-Lib pattern recognisers** — Engulfing, Hammer, Morning Star, Doji,
+Three White Soldiers and the rest. They flag individual candles rather than
+drawing a line, so they arrive as **markers**: a green arrow under a bullish
+candle, a red one above a bearish one, labelled with the pattern name.
+
+Fourteen common ones are in the fx menu; the other 47 are in Settings. Turning
+on several at once gets noisy fast — Engulfing alone fires ~45 times in 300
+daily bars — so pick the two or three you actually trade.
+
+TA-Lib ships prebuilt wheels now, so it installs without the C-library dance it
+used to need.
 
 ### Volume Profile and Fair Value Gaps
 

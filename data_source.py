@@ -210,13 +210,32 @@ def resample_candles(rows, period, tz_offset_min=0):
     """
     from datetime import datetime, timedelta, timezone
 
-    if period not in ("week", "month"):
+    seconds = None
+    if isinstance(period, int):
+        seconds = period
+    elif period not in ("week", "month"):
         raise ValueError(f"cannot resample to '{period}'")
 
     tz = timezone(timedelta(minutes=tz_offset_min))
     buckets = {}
     order = []
     for r in rows:
+        if seconds:
+            # bucket on local time so 2h/4h bars align to the local day, not to
+            # midnight UTC (which would cut an Indian session in an odd place)
+            key = (r["time"] + tz_offset_min * 60) // seconds
+            b = buckets.get(key)
+            if b is None:
+                buckets[key] = {"time": r["time"], "open": r["open"], "high": r["high"],
+                                "low": r["low"], "close": r["close"],
+                                "volume": r.get("volume") or 0}
+                order.append(key)
+            else:
+                b["high"] = max(b["high"], r["high"])
+                b["low"] = min(b["low"], r["low"])
+                b["close"] = r["close"]
+                b["volume"] += r.get("volume") or 0
+            continue
         local = datetime.fromtimestamp(r["time"], tz)
         if period == "week":
             iso = local.isocalendar()
@@ -251,6 +270,8 @@ YF_PERIOD = {
 }
 # our timeframe id -> yahoo's. Note "1m" is a minute and "1M" is a month.
 YF_INTERVAL = {"1h": "60m", "1w": "1wk", "1M": "1mo"}
+# Yahoo has no 3m/2h/4h bars, so they are rolled up from the nearest one it does
+YF_ROLLUP = {"3m": ("1m", 180), "2h": ("60m", 7200), "4h": ("60m", 14400)}
 
 
 def _yf():
@@ -261,6 +282,12 @@ def _yf():
 
 def yfinance_candles(symbol, timeframe, limit):
     yf = _yf()
+    rollup = YF_ROLLUP.get(timeframe)
+    if rollup:
+        base, seconds = rollup
+        per = max(2, seconds // 60)
+        rows = yfinance_candles(symbol, base, min(limit * per, 5000))
+        return resample_candles(rows, seconds, tz_offset_min=330)
     interval = YF_INTERVAL.get(timeframe, timeframe)
     period = YF_PERIOD.get(interval, "1mo")
 
@@ -374,10 +401,12 @@ register_source(
     key="yfinance",
     label="yfinance (NSE / BSE)",
     timeframes=[
-        {"id": "1m", "label": "1m"}, {"id": "5m", "label": "5m"},
-        {"id": "15m", "label": "15m"}, {"id": "30m", "label": "30m"},
-        {"id": "1h", "label": "1h"}, {"id": "1d", "label": "1D"},
-        {"id": "1w", "label": "1W"}, {"id": "1M", "label": "1MO"},
+        {"id": "1m", "label": "1m"}, {"id": "3m", "label": "3m"},
+        {"id": "5m", "label": "5m"}, {"id": "15m", "label": "15m"},
+        {"id": "30m", "label": "30m"}, {"id": "1h", "label": "1h"},
+        {"id": "2h", "label": "2h"}, {"id": "4h", "label": "4h"},
+        {"id": "1d", "label": "1D"}, {"id": "1w", "label": "1W"},
+        {"id": "1M", "label": "1MO"},
     ],
     symbols=NSE_SYMBOLS,
     candles=yfinance_candles,
@@ -484,6 +513,10 @@ def kite_candles(symbol, timeframe, limit):
         days = {"week": 7, "month": 31}[rollup]
         daily = kite_candles(symbol, "1d", min(limit * days, 2000))
         return resample_candles(daily, rollup, tz_offset_min=330)
+    if timeframe in ("2h", "4h"):
+        seconds = 7200 if timeframe == "2h" else 14400
+        hourly = kite_candles(symbol, "1h", min(limit * (seconds // 3600), 2000))
+        return resample_candles(hourly, seconds, tz_offset_min=330)
 
     interval = KITE_TF.get(timeframe)
     if not interval:
@@ -641,7 +674,8 @@ def configure_zerodha() -> bool:
             {"id": "1m", "label": "1m"}, {"id": "3m", "label": "3m"},
             {"id": "5m", "label": "5m"}, {"id": "10m", "label": "10m"},
             {"id": "15m", "label": "15m"}, {"id": "30m", "label": "30m"},
-            {"id": "1h", "label": "1h"}, {"id": "1d", "label": "1D"},
+            {"id": "1h", "label": "1h"}, {"id": "2h", "label": "2h"},
+            {"id": "4h", "label": "4h"}, {"id": "1d", "label": "1D"},
             {"id": "1w", "label": "1W"}, {"id": "1M", "label": "1MO"},
         ],
         symbols=_kite_symbol_list(),

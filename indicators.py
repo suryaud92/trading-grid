@@ -746,3 +746,118 @@ def compute_overlays(candles, spec_text):
             result["key"] = ":".join([name] + [_fmt(a) for a in args])
             out.append(result)
     return out
+
+
+# ==========================================================================
+# Candlestick patterns — TA-Lib's 61 recognisers, drawn as markers.
+#
+# These are not lines either: each one flags individual candles, so they come
+# back as chart markers (an arrow under a bullish candle, above a bearish one)
+# rather than a series. TA-Lib returns +100 bullish, -100 bearish, 0 nothing.
+#
+# A handful are curated into the fx menu; the rest are available from Settings.
+# ==========================================================================
+
+PATTERN_CURATED = {
+    "CDLENGULFING", "CDLHAMMER", "CDLINVERTEDHAMMER", "CDLSHOOTINGSTAR",
+    "CDLDOJI", "CDLMORNINGSTAR", "CDLEVENINGSTAR", "CDLHARAMI",
+    "CDL3WHITESOLDIERS", "CDL3BLACKCROWS", "CDLPIERCING", "CDLDARKCLOUDCOVER",
+    "CDLMARUBOZU", "CDLHANGINGMAN",
+}
+
+_patterns_cache = None
+
+
+def _talib():
+    import talib
+    return talib
+
+
+def _pretty_pattern(fn_name):
+    """CDL3WHITESOLDIERS -> '3 White Soldiers'"""
+    import re
+
+    body = fn_name[3:].title()
+    body = re.sub(r"(\d+)", r" \1 ", body)
+    return " ".join(body.split())
+
+
+def pattern_specs():
+    """One entry per TA-Lib CDL function, discovered from the library itself."""
+    global _patterns_cache
+    if _patterns_cache is not None:
+        return _patterns_cache
+    try:
+        talib = _talib()
+        names = [f for f in talib.get_functions() if f.startswith("CDL")]
+    except Exception as err:
+        print(f"[patterns] TA-Lib unavailable ({err}); candlestick patterns disabled")
+        _patterns_cache = []
+        return _patterns_cache
+
+    _patterns_cache = [{
+        "id": "pat_" + name[3:].lower(),
+        "label": _pretty_pattern(name),
+        "pane": "markers",
+        "params": [],
+        "lines": [{"key": name, "name": _pretty_pattern(name), "color": "#22c55e"}],
+        "note": "Candlestick pattern · arrows on matching candles",
+        "curated": name in PATTERN_CURATED,
+        "_fn": name,
+    } for name in sorted(names)]
+    return _patterns_cache
+
+
+PATTERN_BY_ID = None
+
+
+def _pattern_index():
+    global PATTERN_BY_ID
+    if PATTERN_BY_ID is None:
+        PATTERN_BY_ID = {p["id"]: p for p in pattern_specs()}
+    return PATTERN_BY_ID
+
+
+def pattern_catalog():
+    return [{k: v for k, v in p.items() if not k.startswith("_")} for p in pattern_specs()]
+
+
+def compute_markers(candles, spec_text):
+    """Markers for every requested pattern, merged and sorted by time."""
+    wanted = [b.strip().split(":")[0].lower() for b in (spec_text or "").split(",")]
+    index = _pattern_index()
+    active = [index[w] for w in wanted if w in index]
+    if not active or len(candles) < 5:
+        return []
+
+    import numpy as np
+
+    talib = _talib()
+    o = np.array([c["open"] for c in candles], dtype=float)
+    h = np.array([c["high"] for c in candles], dtype=float)
+    low = np.array([c["low"] for c in candles], dtype=float)
+    cl = np.array([c["close"] for c in candles], dtype=float)
+
+    out = []
+    for spec in active:
+        try:
+            result = getattr(talib, spec["_fn"])(o, h, low, cl)
+        except Exception as err:
+            print(f"[patterns] {spec['_fn']} failed: {err}")
+            continue
+        short = spec["label"]
+        for i, raw in enumerate(result):
+            val = int(raw)
+            if val == 0:
+                continue
+            bullish = val > 0
+            out.append({
+                "time": candles[i]["time"],
+                "position": "belowBar" if bullish else "aboveBar",
+                "shape": "arrowUp" if bullish else "arrowDown",
+                "color": "#22c55e" if bullish else "#ef4444",
+                "text": short,
+            })
+
+    out.sort(key=lambda m: m["time"])
+    return out[-300:]        # a busy chart with several patterns would be unreadable

@@ -73,6 +73,7 @@
       this.indSeries = new Map();
       this.indLines = new Map();   // key -> [{time,value}] merged history
       this.overlays = new Map();   // type -> chart primitive (volume profile, FVG)
+      this.markerApi = null;       // candlestick pattern arrows
       this.decimals = 2;
       this.reqToken = 0;
       this.build();
@@ -111,8 +112,12 @@
       this.btnAlert = el('button', 'pane-btn', '🔔');
       this.btnAlert.type = 'button';
       this.btnAlert.title = 'Price alerts';
+      this.btnMax = el('button', 'pane-btn', '⛶');
+      this.btnMax.type = 'button';
+      this.btnMax.title = 'Maximise / restore (F)';
 
-      head.append(this.symbolInput, this.selTf, this.selSource, this.btnInd, this.btnAlert);
+      head.append(this.symbolInput, this.selTf, this.selSource,
+                  this.btnInd, this.btnAlert, this.btnMax);
 
       this.ticker = el('div', 'ticker');
       this.tSym = el('span', 't-sym', '—');
@@ -150,6 +155,13 @@
       this.selTf.addEventListener('change', () => this.apply({ timeframe: this.selTf.value }));
       this.btnInd.addEventListener('click', () => this.openIndicatorMenu());
       this.btnAlert.addEventListener('click', () => this.openAlertMenu());
+      this.btnMax.addEventListener('click', () => {
+        if (this.ctx.onMaximise) this.ctx.onMaximise(this);
+      });
+      /* clicking anywhere in a pane makes it the target for the watchlist */
+      root.addEventListener('mousedown', () => {
+        if (this.ctx.onFocus) this.ctx.onFocus(this.index);
+      }, true);
 
       this.offAlerts = Alerts.onChange(() => this.paintAlertBadge());
       this.paintAlertBadge();
@@ -211,6 +223,11 @@
         autoSize: false,
         width: this.chartEl.clientWidth || 300,
         height: this.chartEl.clientHeight || 200,
+      });
+
+      this.chart.subscribeCrosshairMove((param) => {
+        if (this._echo || !this.ctx.onCrosshair) return;
+        this.ctx.onCrosshair(this, param && param.time != null ? param.time : null);
       });
 
       this.series = addCandles(this.chart, {
@@ -280,6 +297,7 @@
         this.indLines = new Map((res.indicators || []).map((l) => [l.key, l]));
         this.drawIndicators();
         this.drawOverlays(res.overlays || []);
+        this.drawMarkers(res.markers || []);
         this.chart.timeScale().fitContent();
 
         this.lastBar = Object.assign({}, candles[candles.length - 1]);
@@ -389,6 +407,7 @@
         this.mergeIndicators(res.indicators || [], full);
         this.drawIndicators();
         if (withOverlays) this.drawOverlays(res.overlays || []);
+        this.drawMarkers(res.markers || []);
         const last = this.candles[this.candles.length - 1];
         this.lastBar = Object.assign({}, last);
         this.refPrice = this.computeReference(this.candles);
@@ -489,7 +508,7 @@
       /* one pane per band indicator, in the order they were added */
       const bandGroups = [];
       for (const line of wanted.values()) {
-        if (line.pane === 'overlay') continue;
+        if (line.pane === 'overlay' || line.pane === 'markers') continue;
         if (line.pane === 'sub' && bandGroups.indexOf(line.group) === -1) {
           bandGroups.push(line.group);
         }
@@ -616,6 +635,32 @@
       }
     }
 
+    /* Candlestick patterns flag individual candles rather than drawing a
+     * line, so they arrive as markers. v5 moved setMarkers off the series and
+     * into createSeriesMarkers, which returns a handle we keep and update. */
+    drawMarkers(markers) {
+      if (!this.series) return;
+      const shift = this.tzShift;
+      const data = (markers || []).map((m) => ({
+        time: m.time + shift,
+        position: m.position,
+        shape: m.shape,
+        color: m.color,
+        text: m.text,
+        size: 1,
+      }));
+      try {
+        if (LWC.createSeriesMarkers) {
+          if (!this.markerApi) this.markerApi = LWC.createSeriesMarkers(this.series, data);
+          else this.markerApi.setMarkers(data);
+        } else if (typeof this.series.setMarkers === 'function') {
+          this.series.setMarkers(data);            // v4
+        }
+      } catch (err) {
+        console.warn('[markers]', err);
+      }
+    }
+
     setIndicators(list) {
       this.config.indicators = Indicators.clean(list);
       this.ctx.onChange(this.index, this.config);
@@ -687,7 +732,7 @@
           const renderChips = (q) => {
             groups.innerHTML = '';
             const needle = (q || '').trim().toLowerCase();
-            [['price', 'On the chart'], ['overlay', 'Drawn over the chart'], ['sub', 'In a band below']].forEach(([kind, heading]) => {
+            [['price', 'On the chart'], ['overlay', 'Drawn over the chart'], ['markers', 'Candle patterns'], ['sub', 'In a band below']].forEach(([kind, heading]) => {
               const matches = Indicators.menuCatalog().filter((c) =>
                 c.pane === kind &&
                 (!needle || c.label.toLowerCase().includes(needle) || c.id.includes(needle)));
