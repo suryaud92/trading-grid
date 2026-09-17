@@ -52,17 +52,76 @@
     },
   ];
 
+  /* ---------------------------------------------------------------------
+   * Watchlists are written once, but each data source spells symbols its own
+   * way: yfinance wants RELIANCE.NS and ^NSEI, Zerodha wants NSE:RELIANCE and
+   * NSE:NIFTY 50. Translate on the way into a pane rather than making people
+   * keep a separate list per broker.
+   *
+   * US stocks, crypto and commodities have no Zerodha equivalent at all, so
+   * those return null and the click is refused with an explanation.
+   * ------------------------------------------------------------------- */
+  const INDEX_MAP = [
+    ['^NSEI', 'NSE:NIFTY 50'],
+    ['^NSEBANK', 'NSE:NIFTY BANK'],
+    ['^BSESN', 'BSE:SENSEX'],
+    ['^CNXIT', 'NSE:NIFTY IT'],
+  ];
+
+  function toZerodha(symbol) {
+    if (/^(NSE|BSE|NFO|MCX):/.test(symbol)) return symbol;
+    const hit = INDEX_MAP.find((m) => m[0] === symbol);
+    if (hit) return hit[1];
+    if (symbol.endsWith('.NS')) return 'NSE:' + symbol.slice(0, -3);
+    if (symbol.endsWith('.BO')) return 'BSE:' + symbol.slice(0, -3);
+    return null;                       // not an Indian listing Zerodha carries
+  }
+
+  function toYahoo(symbol) {
+    const hit = INDEX_MAP.find((m) => m[1] === symbol);
+    if (hit) return hit[0];
+    if (symbol.startsWith('NSE:')) return symbol.slice(4) + '.NS';
+    if (symbol.startsWith('BSE:')) return symbol.slice(4) + '.BO';
+    return symbol;
+  }
+
+  function forSource(symbol, sourceKey) {
+    if (sourceKey === 'zerodha') return toZerodha(symbol);
+    return toYahoo(symbol);
+  }
+
   const Watchlist = {
+    forSource,
     lists: null,
     active: 0,
     el: null,
 
     load() {
-      try {
-        const raw = JSON.parse(localStorage.getItem(KEY) || 'null');
-        if (Array.isArray(raw) && raw.length) { this.lists = raw; return; }
-      } catch (_) {}
+      let stored = null;
+      try { stored = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) {}
+      const fresh = JSON.parse(JSON.stringify(DEFAULTS));
+
+      if (!Array.isArray(stored) || !stored.length) { this.lists = fresh; return; }
+
+      /* Self-heal: a stored list that has lost its items (an interrupted save,
+       * an older format) gets its defaults back rather than showing an empty
+       * drawer with no way out. */
+      this.lists = stored.map((list) => {
+        const ok = list && typeof list.name === 'string';
+        if (!ok) return null;
+        if (Array.isArray(list.items) && list.items.length) return list;
+        const seed = fresh.find((d) => d.name === list.name);
+        return seed ? seed : { name: list.name, items: [] };
+      }).filter(Boolean);
+
+      if (!this.lists.length) this.lists = fresh;
+    },
+
+    reset() {
+      try { localStorage.removeItem(KEY); } catch (_) {}
       this.lists = JSON.parse(JSON.stringify(DEFAULTS));
+      this.active = 0;
+      this.render();
     },
 
     save() {
@@ -128,6 +187,11 @@
           this.renderItems(document.getElementById('wl-search').value);
         });
         row.addEventListener('click', () => global.App.loadSymbol(it.symbol));
+        const pane = global.App.panes[global.App.activeIndex];
+        if (pane && forSource(it.symbol, pane.source.key) === null) {
+          row.classList.add('unavailable');
+          row.title = it.symbol + ' is not available on ' + pane.source.label;
+        }
         row.append(sym, name, del);
         host.appendChild(row);
       });
@@ -155,6 +219,8 @@
       const doAdd = () => { this.add(addIn.value); addIn.value = ''; };
       addBtn.addEventListener('click', doAdd);
       addIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAdd(); });
+      const reset = document.getElementById('wl-reset');
+      if (reset) reset.addEventListener('click', () => this.reset());
     },
   };
 

@@ -209,13 +209,22 @@
       const targets = this.state.syncSymbol
         ? this.panes
         : [this.panes[this.activeIndex] || this.panes[0]];
+      let refused = 0;
       targets.forEach((p) => {
         if (!p) return;
-        if (!this.symbolsFor(p.source.key).some((s) => s.symbol === symbol)) {
-          this.addCustomSymbol(p.source.key, symbol);
+        /* the same watchlist entry is spelled differently per source */
+        const mapped = Watchlist.forSource(symbol, p.source.key);
+        if (!mapped) { refused += 1; return; }
+        if (!this.symbolsFor(p.source.key).some((s) => s.symbol === mapped)) {
+          this.addCustomSymbol(p.source.key, mapped);
         }
-        p.apply({ symbol: symbol });
+        p.apply({ symbol: mapped });
       });
+      if (refused && global.Toast) {
+        const src = (targets[0] && targets[0].source.label) || 'this source';
+        Toast.show(symbol + ' is not on ' + src,
+                   'Switch that chart to yfinance for US, crypto and commodities.', 'below');
+      }
     },
 
     renderGrid() {

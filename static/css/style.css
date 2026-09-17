@@ -798,3 +798,7 @@ body {
   .grid[data-layout="3"] .pane { grid-area: auto !important; }
   .sync-toggles .pill { font-size: 10px; padding: 3px 7px; }
 }
+
+.wl-item.unavailable { opacity: .42; }
+.wl-item.unavailable .wl-sym { text-decoration: line-through; }
+#wl-reset { flex: 0 0 auto; padding: 5px 9px; }

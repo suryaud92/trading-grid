@@ -26,7 +26,7 @@ says so out loud. Never expose that configuration to the internet.
 |---|---|
 | **Layout 1 / 2 / 2↕ / 3 / 4 / 6 / 8** | 2 side by side, 2↕ stacked, 3 as one large plus two companions, then 2×2, 3×2, 4×2. Bound to the matching keys. |
 | **⛶ Maximise** | Blow one chart up full-screen and back. Keyboard: `F` on the active chart. |
-| **☰ Watchlist** | Categorised lists (Indian, US tech, Crypto & commodities) in a side drawer, editable. Clicking loads into the chart you last clicked — or into every chart when symbol sync is on. |
+| **☰ Watchlist** | Categorised lists (Indian, US tech, Crypto & commodities) in a side drawer, editable, with ↺ to restore the defaults. Clicking loads into the chart you last clicked — or into every chart when symbol sync is on. |
 | **✛ Crosshair / 🔗 Symbol** | Scrub time across every chart at once, and change them all to one ticker together. |
 | **Symbol search** | Type in the symbol box and matches appear as you go, by ticker *or* company name ("tata" finds Tata Steel, Tata Motors and TCS). Anything not in the list can be entered as typed and is remembered. |
 | **Timeframes** | `1m 3m 5m 15m 30m 1h 2h 4h 1D 1W 1MO`, independent per pane. Yahoo has no 3m/2h/4h bars so those are rolled up from 1m and 1h, bucketed on local time so they align to the Indian session rather than to midnight UTC. |
@@ -94,6 +94,22 @@ Two consequences of computing on the server worth knowing:
   to a full reload. A top-up is ~2.2 KB with five indicators running; eight
   panes at the 4s Zerodha rate come to about 2.2 GB/month, at 15s about 0.6 GB,
   against Render's 5 GB allowance.
+
+### Watchlists and symbol spelling
+
+Each source spells symbols its own way: yfinance wants `RELIANCE.NS` and
+`^NSEI`, Zerodha wants `NSE:RELIANCE` and `NSE:NIFTY 50`. Rather than keeping a
+separate list per broker, watchlist entries are **translated on the way into a
+pane** — clicking Reliance loads the right spelling for whichever source that
+chart is on.
+
+US stocks, crypto and commodities have no Zerodha listing at all. Those entries
+are shown struck through when the active chart is on Zerodha, and clicking one
+explains itself rather than failing silently.
+
+A stored list that has somehow lost its contents is refilled from the defaults
+on load, so the drawer can never strand you with an empty list and no way back.
+The ↺ button restores everything.
 
 ### Candlestick patterns
 
