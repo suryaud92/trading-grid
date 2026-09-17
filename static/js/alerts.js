@@ -162,4 +162,6 @@
 
   Alerts.load();
   global.Alerts = Alerts;
+  /* the toast strip is generic; the Kite auto-connect uses it too */
+  global.Toast = { show: (title, sub, kind) => toast(title, sub || '', kind || 'above') };
 })(window);

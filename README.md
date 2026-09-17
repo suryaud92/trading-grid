@@ -236,8 +236,19 @@ deliberately public; everything else is gated.
 ## Connecting Zerodha
 
 Settings (⚙) → paste your Kite **API key** and **secret** → Save → **Open Kite
-login** → sign in at Zerodha → paste the `request_token` back (the whole
-redirect URL works, it's parsed for you) → **Connect**.
+login** → sign in at Zerodha. That's it: Zerodha returns you to the dashboard
+with `?request_token=...` on the URL, and the app finishes the connection
+itself, then strips the token from the address bar (it is a credential, and a
+stale one would fail confusingly on the next refresh).
+
+Pasting the token by hand still works from Settings if the automatic path ever
+fails. For the redirect to come back to the right place, the **Redirect URL** on
+your Kite app must exactly match where the dashboard is served from, e.g.
+`https://trading-grid.onrender.com/`.
+
+When creating the Kite app, pick the **Connect** type: the free *Personal* type
+excludes historical chart data and live quotes, which are the two things this
+app runs on.
 
 "Zerodha (Kite)" then appears in every pane's source dropdown with ~600 NSE/BSE
 symbols and intervals `1m 3m 5m 10m 15m 30m 1h 1d`. Symbols are

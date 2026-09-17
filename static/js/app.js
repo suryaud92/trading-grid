@@ -288,6 +288,45 @@
       box.hidden = false;
     },
 
+    /* ---------------------------------------------------- kite return */
+
+    /* Zerodha sends you back to the redirect URL carrying ?request_token=...
+     * Rather than making you copy that out of the address bar every trading
+     * day, finish the connection here and tidy the URL up.
+     *
+     * The token is stripped from the address bar immediately: it is a
+     * credential, and a stale one left in history would fail confusingly on
+     * the next refresh. */
+    async captureKiteToken() {
+      let params;
+      try {
+        params = new URLSearchParams(global.location.search);
+      } catch (_) { return false; }
+
+      const token = params.get('request_token');
+      if (!token) return false;
+
+      const status = params.get('status');
+      const clean = global.location.pathname + global.location.hash;
+      try { history.replaceState(null, '', clean); } catch (_) {}
+
+      if (status && status !== 'success') {
+        Toast.show('Zerodha login did not complete', 'status: ' + status, 'below');
+        return false;
+      }
+
+      Toast.show('Connecting to Zerodha…', 'finishing the login', 'above');
+      try {
+        const view = await Feeds.api.post('/api/settings/kite/connect', { requestToken: token });
+        const who = (view && view.kite && view.kite.user) || '';
+        Toast.show('Zerodha connected', who ? 'as ' + who : 'live data is on', 'above');
+        return true;
+      } catch (err) {
+        Toast.show('Zerodha connection failed', err.message, 'below');
+        return false;
+      }
+    },
+
     /* ------------------------------------------------------------ boot */
     async start() {
       if (!global.LightweightCharts) {
@@ -296,6 +335,8 @@
         return;
       }
       this.load();
+      /* do this before listing sources, so a fresh connection shows up at once */
+      await this.captureKiteToken();
       try {
         const { sources } = await Feeds.api.sources();
         if (!sources || !sources.length) throw new Error('no data sources registered');
