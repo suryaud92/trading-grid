@@ -496,11 +496,17 @@ def _kite_instruments():
     """{'NSE:RELIANCE': {...}} — the dump is public and ~2 MB, so cache it 12h."""
 
     def fetch():
+        import gc
+        import sys
         from kiteconnect import KiteConnect
 
         cfg = app_settings.kite_credentials()
         client = KiteConnect(api_key=cfg["api_key"] or "public")
         rows = {}
+        # ~59,000 instruments, and the names, expiries and kinds repeat
+        # heavily. Interning them shares one copy of each string instead of
+        # tens of thousands, which is most of the difference on a 512 MB box.
+        intern = sys.intern
         # NFO is the derivatives segment: ~650 futures and ~36,000 option
         # contracts. They are searchable but deliberately kept out of the
         # dropdown head, or every list would be a wall of strikes.
@@ -514,17 +520,22 @@ def _kite_instruments():
                     kind = ("FUT" if itype == "FUT"
                             else "OPT" if itype in ("CE", "PE")
                             else "INDEX" if seg == "INDICES" else "EQ")
-                    rows[exch + ":" + i["tradingsymbol"]] = {
+                    ts = i["tradingsymbol"]
+                    rows[intern(exch + ":" + ts)] = {
                         "token": i["instrument_token"],
-                        "tradingsymbol": i["tradingsymbol"],
-                        "name": i.get("name") or i["tradingsymbol"],
-                        "kind": kind,
-                        "expiry": str(i.get("expiry") or ""),
+                        "tradingsymbol": intern(ts),
+                        "name": intern(i.get("name") or ts),
+                        "kind": intern(kind),
+                        "expiry": intern(str(i.get("expiry") or "")),
                         "strike": float(i.get("strike") or 0),
                         "lot": int(i.get("lot_size") or 0),
                     }
             except Exception as err:
                 print(f"[kite] instrument dump for {exch} failed: {err}")
+        # Parsing 59,000 rows leaves a lot of short-lived garbage. Collecting
+        # here hands the peak back rather than carrying it for the process's
+        # life, which matters when the whole box is 512 MB.
+        gc.collect()
         return rows
 
     return cached(43200.0, "kite:instruments", fetch)
