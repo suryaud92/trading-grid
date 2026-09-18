@@ -62,13 +62,16 @@ def api_config():
     })
 
 
-# --------------------------------------------------------------- market data ---
-
 @app.get("/api/sources")
 @auth.require_admin
-def api_sources():
-    return jsonify({"sources": ds.all_sources()})
+def api_sources_with_default():
+    return jsonify({
+        "sources": ds.all_sources(),
+        "defaultSource": app_settings.public_view().get("defaultSource") or "",
+    })
 
+
+# --------------------------------------------------------------- market data ---
 
 @app.get("/api/symbols")
 @auth.require_admin
@@ -164,6 +167,19 @@ def api_settings_get():
     view["user"] = g.get("user_email")
     view["sources"] = [s["key"] for s in ds.all_sources()]
     return jsonify(view)
+
+
+@app.post("/api/settings/default-source")
+@auth.require_admin
+def api_settings_default_source():
+    """Which feed new charts open on."""
+    body = request.get_json(silent=True) or {}
+    key = (body.get("source") or "").strip()
+    known = [s["key"] for s in ds.all_sources()]
+    if key and key not in known:
+        return jsonify({"error": f"unknown source '{key}'"}), 400
+    app_settings.update(default_source=key)
+    return jsonify(app_settings.public_view())
 
 
 @app.post("/api/settings/kite")

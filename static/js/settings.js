@@ -117,6 +117,36 @@
       const k = this.state.kite;
       document.getElementById('set-user').textContent = this.state.user || '—';
 
+      /* Say plainly whether anything typed here will survive a restart. */
+      const chip = document.getElementById('set-persist');
+      if (this.state.persistent) {
+        chip.textContent = 'saved permanently';
+        chip.dataset.state = 'on';
+        chip.title = 'Settings are stored in Firestore, so they are shared '
+          + 'across your devices and survive redeploys.';
+      } else {
+        chip.textContent = 'this server only';
+        chip.dataset.state = 'off';
+        chip.title = 'Settings live on the server\u2019s disk. On a free host that '
+          + 'disk is wiped on every restart, so you will have to reconnect. '
+          + 'Set FIREBASE_SERVICE_ACCOUNT to store them permanently.';
+      }
+
+      this.renderDefaultSource();
+
+      /* Once saved, the app credentials are a fact, not a form. */
+      const savedRow = document.getElementById('kite-creds-saved');
+      const form = document.getElementById('kite-creds-form');
+      const haveBoth = !!(k.apiKey && k.apiSecretSet);
+      if (haveBoth && !this._editingCreds) {
+        savedRow.hidden = false;
+        form.hidden = true;
+        document.getElementById('kite-key-shown').textContent = k.apiKey;
+      } else {
+        savedRow.hidden = true;
+        form.hidden = false;
+      }
+
       const badge = document.getElementById('kite-badge');
       badge.textContent = k.connected ? 'Connected' : 'Not connected';
       badge.dataset.state = k.connected ? 'on' : 'off';
@@ -151,6 +181,35 @@
       this.status('');
     },
 
+    renderDefaultSource() {
+      const sel = document.getElementById('set-default-source');
+      if (!sel) return;
+      const sources = (this.state.sources || []);
+      sel.innerHTML = '';
+      const auto = document.createElement('option');
+      auto.value = '';
+      auto.textContent = 'Automatic (prefer the live broker)';
+      sel.appendChild(auto);
+      sources.forEach((key) => {
+        const o = document.createElement('option');
+        o.value = key;
+        o.textContent = (App.sources[key] && App.sources[key].label) || key;
+        sel.appendChild(o);
+      });
+      sel.value = this.state.defaultSource || '';
+    },
+
+    async setDefaultSource(key) {
+      this.status('Saving…');
+      try {
+        this.state = await Feeds.api.post('/api/settings/default-source', { source: key });
+        this.dirty = true;
+        this.render();
+        this.status('New charts will open on '
+          + (key ? (App.sources[key] || {}).label || key : 'the live broker when available') + '.');
+      } catch (err) { this.status(err.message, true); }
+    },
+
     async saveApp() {
       const apiKey = document.getElementById('kite-key').value.trim();
       const apiSecret = document.getElementById('kite-secret').value.trim();
@@ -159,9 +218,11 @@
       try {
         this.state = await Feeds.api.post('/api/settings/kite', { apiKey, apiSecret });
         document.getElementById('kite-secret').value = '';
+        this._editingCreds = false;
         this.dirty = true;
         this.render();
-        this.status('Saved.');
+        this.status('Saved.' + (this.state.persistent ? '' :
+          ' Note: this server does not store settings permanently.'));
       } catch (err) { this.status(err.message, true); }
     },
 
@@ -217,6 +278,26 @@
         if (e.key === 'Escape' && this.el && !this.el.hidden) this.close();
       });
       document.getElementById('kite-save').addEventListener('click', () => this.saveApp());
+      const edit = document.getElementById('kite-edit');
+      if (edit) {
+        edit.addEventListener('click', () => {
+          this._editingCreds = true;
+          this.render();
+          document.getElementById('kite-key').focus();
+        });
+      }
+      const defSel = document.getElementById('set-default-source');
+      if (defSel) defSel.addEventListener('change', () => this.setDefaultSource(defSel.value));
+      const applyAll = document.getElementById('set-apply-all');
+      if (applyAll) {
+        applyAll.addEventListener('click', () => {
+          const key = document.getElementById('set-default-source').value
+            || (App.sources.zerodha ? 'zerodha' : Object.keys(App.sources)[0]);
+          const n = App.switchAllTo(key);
+          this.status(n ? n + ' chart(s) switched to ' + (App.sources[key].label) + '.'
+                        : 'All charts are already on that feed.');
+        });
+      }
       document.getElementById('kite-login').addEventListener('click', () => this.openKiteLogin());
       document.getElementById('kite-connect').addEventListener('click', () => this.connect());
       document.getElementById('kite-disconnect').addEventListener('click', () => this.disconnect());

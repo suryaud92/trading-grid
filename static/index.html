@@ -138,7 +138,22 @@
     </div>
 
     <div class="modal-body">
-      <div class="row-meta">Signed in as <strong id="set-user">—</strong></div>
+      <div class="row-meta">
+        Signed in as <strong id="set-user">—</strong>
+        <span id="set-persist" class="persist-chip"></span>
+      </div>
+
+      <section class="card">
+        <div class="card-head"><h3>Default data feed</h3></div>
+        <p class="card-detail">Which feed new charts open on.</p>
+        <div class="field-row">
+          <label class="field">
+            <span>Default</span>
+            <select id="set-default-source"></select>
+          </label>
+          <button type="button" class="btn" id="set-apply-all">Switch all open charts</button>
+        </div>
+      </section>
 
       <section class="card">
         <div class="card-head">
@@ -147,7 +162,12 @@
         </div>
         <p class="card-detail" id="kite-detail"></p>
 
-        <div class="field-row">
+        <div id="kite-creds-saved" class="creds-saved" hidden>
+          <span>App credentials saved — <code id="kite-key-shown"></code></span>
+          <button type="button" class="btn small" id="kite-edit">Edit</button>
+        </div>
+
+        <div class="field-row" id="kite-creds-form">
           <label class="field">
             <span>API key</span>
             <input type="text" id="kite-key" placeholder="Kite API key" autocomplete="off" spellcheck="false">

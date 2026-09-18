@@ -76,7 +76,11 @@
     defaultConfigs() {
       const keys = Object.keys(this.sources);
       /* Prefer Zerodha when it's configured — it's the live one. */
-      const preferred = this.sources.zerodha ? 'zerodha'
+      /* Your chosen default wins; otherwise prefer the live broker feed over
+       * the delayed free one. */
+      const preferred = (this.defaultSource && this.sources[this.defaultSource])
+        ? this.defaultSource
+        : this.sources.zerodha ? 'zerodha'
         : this.sources.yfinance ? 'yfinance' : keys[0];
       const picks = {
         zerodha: ['NSE:NIFTY 50', 'NSE:NIFTY BANK', 'NSE:RELIANCE', 'NSE:HDFCBANK',
@@ -277,17 +281,38 @@
       requestAnimationFrame(() => this.panes.forEach((p) => p.resize()));
     },
 
+    /** Point every open chart at one source, translating symbols as needed. */
+    switchAllTo(sourceKey) {
+      const src = this.sources[sourceKey];
+      if (!src) return 0;
+      let moved = 0;
+      this.panes.forEach((p) => {
+        if (p.source.key === sourceKey) return;
+        const mapped = Watchlist.forSource(p.config.symbol, sourceKey);
+        p.apply({
+          source: sourceKey,
+          symbol: mapped || src.defaultSymbol,
+          timeframe: src.timeframes.some((t) => t.id === p.config.timeframe)
+            ? p.config.timeframe : src.defaultTimeframe,
+        });
+        moved += 1;
+      });
+      return moved;
+    },
+
     /** Called after Settings changes which brokers are available. */
     async reloadSources() {
-      let sources;
+      let sources, res;
       try {
-        ({ sources } = await Feeds.api.sources());
+        res = await Feeds.api.sources();
+        sources = res.sources;
       } catch (err) {
         console.warn('[app] could not reload sources', err.message);
         return;
       }
       this.sources = {};
       sources.forEach((s) => { this.sources[s.key] = s; });
+      this.defaultSource = res.defaultSource || this.defaultSource || '';
       this.normalizeConfigs();
       this.save();
       Feeds.Poller.stopAll();
@@ -399,9 +424,11 @@
       /* do this before listing sources, so a fresh connection shows up at once */
       await this.captureKiteToken();
       try {
-        const { sources } = await Feeds.api.sources();
+        const res = await Feeds.api.sources();
+        const sources = res.sources;
         if (!sources || !sources.length) throw new Error('no data sources registered');
         sources.forEach((s) => { this.sources[s.key] = s; });
+        this.defaultSource = res.defaultSource || '';
       } catch (err) {
         this.fatal('Could not load data sources: ' + err.message);
         return;

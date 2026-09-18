@@ -5,13 +5,18 @@ Broker credentials live HERE, on the server, never in the browser and never in
 git. A Kite access token can place orders on your account, so the UI only ever
 sees a masked version and a connection status.
 
-Storage is a single JSON file, chmod 600:
-    instance/settings.json          (override with SETTINGS_FILE)
+Two backends, chosen automatically:
 
-On a container host with an ephemeral disk (Render free, HF Spaces) the file is
-wiped on redeploy, which means reconnecting Kite from Settings — the token dies
-daily anyway. Set KITE_API_KEY / KITE_API_SECRET as env vars to survive that;
-env values are used as defaults and the UI still owns the access token.
+* **Firestore**, when FIREBASE_SERVICE_ACCOUNT holds a service-account JSON.
+  Survives restarts and redeploys, so a connection made on your phone is
+  already there on your laptop, and your API key and secret are entered once
+  rather than after every deploy.
+* **A local JSON file** otherwise (instance/settings.json, chmod 600) — fine
+  for localhost, but on a host with an ephemeral disk like Render's free tier
+  it is wiped on every restart, which is exactly what made Kite look
+  device-specific when it never was.
+
+Env vars KITE_API_KEY / KITE_API_SECRET still act as defaults either way.
 """
 
 from __future__ import annotations
@@ -28,8 +33,43 @@ SETTINGS_FILE = os.environ.get(
 
 _lock = threading.RLock()
 _cache: dict | None = None
+_store = None            # a Firestore document handle, or None for file mode
+_store_checked = False
+
+
+def _firestore():
+    """The settings document, or None if Firestore is not configured.
+
+    Resolved once: if the credentials are missing or wrong we fall back to the
+    file rather than failing every read, because losing the broker connection
+    is worse than losing persistence.
+    """
+    global _store, _store_checked
+    if _store_checked:
+        return _store
+    _store_checked = True
+
+    raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
+    if not raw:
+        return None
+    try:
+        from google.cloud import firestore
+        from google.oauth2 import service_account
+
+        info = json.loads(raw)
+        creds = service_account.Credentials.from_service_account_info(info)
+        client = firestore.Client(project=info.get("project_id"), credentials=creds)
+        _store = client.collection("tradingGrid").document("settings")
+        _store.get()                     # fail fast if the key is wrong
+        print("[settings] using Firestore — settings persist across restarts")
+    except Exception as err:
+        print(f"[settings] Firestore unavailable ({type(err).__name__}: {err}); "
+              "falling back to the local file")
+        _store = None
+    return _store
 
 _DEFAULTS = {
+    "default_source": "",          # which feed new charts open on
     "kite_api_key": "",
     "kite_api_secret": "",
     "kite_access_token": "",
@@ -43,13 +83,22 @@ def _read() -> dict:
     with _lock:
         if _cache is None:
             data = dict(_DEFAULTS)
-            try:
-                with open(SETTINGS_FILE) as fh:
-                    data.update(json.load(fh))
-            except FileNotFoundError:
-                pass
-            except Exception as err:
-                print(f"[settings] {SETTINGS_FILE} unreadable ({err}); using defaults")
+            doc = _firestore()
+            if doc is not None:
+                try:
+                    snap = doc.get()
+                    if snap.exists:
+                        data.update(snap.to_dict() or {})
+                except Exception as err:
+                    print(f"[settings] Firestore read failed ({err}); using defaults")
+            else:
+                try:
+                    with open(SETTINGS_FILE) as fh:
+                        data.update(json.load(fh))
+                except FileNotFoundError:
+                    pass
+                except Exception as err:
+                    print(f"[settings] {SETTINGS_FILE} unreadable ({err}); using defaults")
             # env vars seed the app credentials but never the access token
             data["kite_api_key"] = data["kite_api_key"] or os.environ.get("KITE_API_KEY", "")
             data["kite_api_secret"] = (
@@ -62,15 +111,23 @@ def _read() -> dict:
 def _write(data: dict) -> None:
     global _cache
     with _lock:
-        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-        tmp = SETTINGS_FILE + ".tmp"
-        with open(tmp, "w") as fh:
-            json.dump(data, fh, indent=2)
-        os.replace(tmp, SETTINGS_FILE)
-        try:
-            os.chmod(SETTINGS_FILE, 0o600)
-        except OSError:
-            pass
+        doc = _firestore()
+        if doc is not None:
+            try:
+                doc.set(data)
+            except Exception as err:
+                print(f"[settings] Firestore write failed ({err}); writing the file too")
+                doc = None
+        if doc is None:
+            os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+            tmp = SETTINGS_FILE + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump(data, fh, indent=2)
+            os.replace(tmp, SETTINGS_FILE)
+            try:
+                os.chmod(SETTINGS_FILE, 0o600)
+            except OSError:
+                pass
         _cache = dict(data)
 
 
@@ -102,6 +159,8 @@ def public_view() -> dict:
     connected = bool(d["kite_api_key"] and d["kite_access_token"])
     age_h = (time.time() - d["kite_connected_at"]) / 3600 if d["kite_connected_at"] else None
     return {
+        "persistent": _firestore() is not None,
+        "defaultSource": d.get("default_source") or "",
         "kite": {
             "apiKey": d["kite_api_key"],                   # not secret; it's in the login URL
             "apiSecretSet": bool(d["kite_api_secret"]),

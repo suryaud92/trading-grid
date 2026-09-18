@@ -33,7 +33,7 @@ says so out loud. Never expose that configuration to the internet.
 | **fx Indicators** | 14 indicators via pandas-ta — moving averages, Bollinger, Supertrend, VWAP on the chart; RSI, MACD, Stochastic, ATR, ADX, CCI, MFI, OBV in a band below. Editable periods, saved per pane. |
 | **🔔 Alerts** | Price alerts above/below a level. Fires a toast, a chime and a desktop notification. |
 | **Ticker bar** | Flashes green on an uptick, red on a downtick. A **STALE** badge appears if the feed stops moving — hover it for the reason. |
-| **⚙ Settings** | Connect/disconnect Zerodha. |
+| **⚙ Settings** | Default data feed, Zerodha connection, indicator menu. |
 
 ### Indicators
 
@@ -418,9 +418,28 @@ is against their terms. Also note Kite Connect is a paid subscription and
 historical candles are a separate add-on — without it, live prices work but
 charts won't load.
 
-On a host with an ephemeral disk (Render free, HF Spaces), `instance/` is wiped
-on redeploy. Set `KITE_API_KEY` and `KITE_API_SECRET` as env vars so only the
-daily access-token step is left.
+### Make settings survive restarts
+
+By default settings live in `instance/settings.json` on the server's disk. On a
+free host that disk is **wiped on every restart and redeploy**, which is what
+makes a connection made on your phone look absent on your laptop — it was never
+device-specific, the server just lost it.
+
+Point it at Firestore and that stops:
+
+1. Firebase console → **Project settings → Service accounts → Generate new
+   private key**. A JSON file downloads.
+2. On Render, add an environment variable **`FIREBASE_SERVICE_ACCOUNT`** whose
+   value is that file's entire contents.
+
+Free on the Spark plan; the app writes one document. Settings then persist
+across restarts and are shared by every device, so your API key and secret are
+entered once. The Settings screen says which mode it is in — "saved permanently"
+or "this server only".
+
+If the credentials are missing or wrong the app falls back to the file rather
+than failing, because losing the broker connection is worse than losing
+persistence.
 
 ## Keeping it awake (Render free tier)
 
