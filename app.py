@@ -46,10 +46,17 @@ def api_health():
         patterns = len(ind.pattern_catalog())
     except Exception:
         patterns = 0
+    # Whether settings survive a restart. Not a secret, and the one thing you
+    # need to know when a broker connection keeps vanishing.
+    try:
+        persistent = app_settings.public_view().get("persistent", False)
+    except Exception:
+        persistent = False
     return jsonify({
         "ok": True,
         "sources": [s["key"] for s in ds.all_sources()],
         "candlestickPatterns": patterns,
+        "settingsPersist": persistent,
     })
 
 
