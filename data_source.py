@@ -47,6 +47,30 @@ import requests
 import settings as app_settings
 
 # --------------------------------------------------------------------------
+# Expected failures
+#
+# A symbol that does not exist, or a broker that is not connected, is not a
+# server fault. Raising plain exceptions made both come back as 500s, which
+# buries genuine faults in the log and tells the browser "server broken" when
+# the truth is "that is not available".
+# --------------------------------------------------------------------------
+
+class SourceError(Exception):
+    """Something the caller asked for cannot be provided. Explainable."""
+    status = 400
+
+
+class NotConnected(SourceError):
+    """A broker session is required and missing."""
+    status = 503
+
+
+class NoData(SourceError):
+    """The source has nothing for that symbol or timeframe."""
+    status = 404
+
+
+# --------------------------------------------------------------------------
 # Registry
 # --------------------------------------------------------------------------
 
@@ -317,7 +341,7 @@ def yfinance_candles(symbol, timeframe, limit):
     ttl = 20.0 if interval in ("1m", "2m", "5m", "15m", "30m", "60m") else 300.0
     rows = cached(ttl, f"yf:c:{symbol}:{interval}:{period}", fetch)
     if not rows:
-        raise ValueError(f"no data from yfinance for '{symbol}' @ {timeframe}")
+        raise NoData(f"no data from yfinance for '{symbol}' @ {timeframe}")
     return list(rows)
 
 
@@ -482,7 +506,7 @@ def _kite():
     global _kite_client, _kite_client_token
     cfg = app_settings.kite_credentials()
     if not cfg["api_key"] or not cfg["access_token"]:
-        raise ValueError("Zerodha is not connected — open Settings and sign in to Kite.")
+        raise NotConnected("Zerodha is not connected — open Settings and sign in to Kite.")
     if _kite_client is None or _kite_client_token != cfg["access_token"]:
         from kiteconnect import KiteConnect
 
@@ -546,7 +570,7 @@ def _kite_token(symbol):
     rows = _kite_instruments()
     row = rows.get(sym.upper()) or rows.get(sym)
     if not row:
-        raise ValueError(f"'{symbol}' is not in the Kite NSE/BSE instrument list")
+        raise NoData(f"'{symbol}' is not in the Kite NSE/BSE instrument list")
     return row["token"]
 
 

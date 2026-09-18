@@ -286,6 +286,10 @@ def api_preflight(_any):
 def on_error(exc):
     if isinstance(exc, HTTPException):
         return jsonify({"error": exc.description}), exc.code
+    if isinstance(exc, ds.SourceError):
+        # Expected and explainable: a missing symbol or an unconnected broker
+        # is not a server fault. No traceback, and an honest status code.
+        return jsonify({"error": str(exc)}), exc.status
     if isinstance(exc, KeyError):
         return jsonify({"error": f"missing or unknown parameter: {exc}"}), 400
     app.logger.error("api error: %s\n%s", exc, traceback.format_exc())
