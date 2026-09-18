@@ -49,15 +49,18 @@ def api_health():
     # Whether settings survive a restart. Not a secret, and the one thing you
     # need to know when a broker connection keeps vanishing.
     try:
-        persistent = app_settings.public_view().get("persistent", False)
-    except Exception:
-        persistent = False
-    return jsonify({
+        persistent, reason = app_settings.store_status()
+    except Exception as err:
+        persistent, reason = False, f"{type(err).__name__}: {err}"
+    body = {
         "ok": True,
         "sources": [s["key"] for s in ds.all_sources()],
         "candlestickPatterns": patterns,
         "settingsPersist": persistent,
-    })
+    }
+    if not persistent:
+        body["settingsPersistReason"] = reason
+    return jsonify(body)
 
 
 @app.get("/api/config")

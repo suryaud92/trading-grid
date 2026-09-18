@@ -35,6 +35,7 @@ _lock = threading.RLock()
 _cache: dict | None = None
 _store = None            # a Firestore document handle, or None for file mode
 _store_checked = False
+_store_error = ""        # why Firestore is not in use, for diagnostics
 
 
 def _firestore():
@@ -49,8 +50,10 @@ def _firestore():
         return _store
     _store_checked = True
 
+    global _store_error
     raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
     if not raw:
+        _store_error = "FIREBASE_SERVICE_ACCOUNT is not set on this server"
         return None
     try:
         from google.cloud import firestore
@@ -63,10 +66,17 @@ def _firestore():
         _store.get()                     # fail fast if the key is wrong
         print("[settings] using Firestore — settings persist across restarts")
     except Exception as err:
-        print(f"[settings] Firestore unavailable ({type(err).__name__}: {err}); "
+        _store_error = f"{type(err).__name__}: {err}"[:300]
+        print(f"[settings] Firestore unavailable ({_store_error}); "
               "falling back to the local file")
         _store = None
     return _store
+
+
+def store_status():
+    """(persistent, reason) — safe to expose; it names no credential."""
+    doc = _firestore()
+    return (doc is not None), ("" if doc is not None else _store_error)
 
 _DEFAULTS = {
     "default_source": "",          # which feed new charts open on
