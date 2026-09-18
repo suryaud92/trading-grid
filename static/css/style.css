@@ -889,3 +889,13 @@ body {
 }
 .oc-bar .field input:focus { outline: none; border-color: var(--accent); }
 .oc-bar .field.narrow input { width: 70px; }
+
+/* the data is not moving — say so rather than showing frozen prices as live */
+.ticker .t-stale {
+  font-size: 9px; font-weight: 800; letter-spacing: .08em;
+  padding: 2px 5px; border-radius: 4px;
+  background: rgba(234, 179, 8, .18); color: #eab308;
+  cursor: help;
+}
+.ticker .t-stale[hidden] { display: none !important; }
+.ticker.stale .t-price { color: var(--text-dim); }

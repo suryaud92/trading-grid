@@ -32,7 +32,7 @@ says so out loud. Never expose that configuration to the internet.
 | **Timeframes** | `1m 3m 5m 15m 30m 1h 2h 4h 1D 1W 1MO`, independent per pane. Yahoo has no 3m/2h/4h bars so those are rolled up from 1m and 1h, bucketed on local time so they align to the Indian session rather than to midnight UTC. |
 | **fx Indicators** | 14 indicators via pandas-ta — moving averages, Bollinger, Supertrend, VWAP on the chart; RSI, MACD, Stochastic, ATR, ADX, CCI, MFI, OBV in a band below. Editable periods, saved per pane. |
 | **🔔 Alerts** | Price alerts above/below a level. Fires a toast, a chime and a desktop notification. |
-| **Ticker bar** | Flashes green on an uptick, red on a downtick. |
+| **Ticker bar** | Flashes green on an uptick, red on a downtick. A **STALE** badge appears if the feed stops moving — hover it for the reason. |
 | **⚙ Settings** | Connect/disconnect Zerodha. |
 
 ### Indicators
@@ -191,6 +191,21 @@ quotes and left those rows blank.
 **This screen needs a live Zerodha session.** yfinance has no Indian options, so
 unlike the charts there is no free fallback — without Kite connected it says so
 rather than showing an empty table.
+
+### When the feed stops
+
+A pane used to swallow every refresh failure so that one bad request could not
+wreck the chart. The cost was worse: if refreshes kept failing — an expired
+broker token, a rate limit, a network blip — the pane carried on showing the
+last candles it managed to load, as though they were live.
+
+It now marks itself **STALE** when either
+* two consecutive refreshes have failed, or
+* the newest bar is older than twice the timeframe while the exchange should be
+  open (weekday, 09:15–15:30 for the Indian sources).
+
+The chart is kept, since old data beats no data, but the price greys out and the
+badge explains why. It clears the moment real data arrives.
 
 ### Pivot points
 

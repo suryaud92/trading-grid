@@ -78,6 +78,8 @@
       this.reqToken = 0;
       this.historyLimit = 600;     // grows as you scroll back
       this.historyExhausted = false;
+      this.refreshFailures = 0;
+      this.lastGoodRefresh = 0;
       this.build();
     }
 
@@ -126,7 +128,9 @@
       this.tChg = el('span', 't-chg', '—');
       this.tPrice = el('span', 't-price', '—');
       this.tChg.title = 'Change';
-      this.ticker.append(this.tSym, this.tChg, this.tPrice);
+      this.tStale = el('span', 't-stale', 'STALE');
+      this.tStale.hidden = true;
+      this.ticker.append(this.tSym, this.tStale, this.tChg, this.tPrice);
 
       const body = el('div', 'pane-body');
       this.chartEl = el('div', 'chart');
@@ -284,6 +288,8 @@
       this.candles = [];
       this.historyLimit = 600;
       this.historyExhausted = false;
+      this.refreshFailures = 0;
+      this.lastGoodRefresh = 0;
       this.tSym.textContent = this.config.symbol;
       this.tPrice.textContent = '—';
       this.tChg.textContent = '—';
@@ -452,7 +458,53 @@
         const last = this.candles[this.candles.length - 1];
         this.lastBar = Object.assign({}, last);
         this.refPrice = this.computeReference(this.candles);
-      } catch (_) { /* a failed refresh should not disturb the pane */ }
+        this.refreshFailures = 0;
+        this.lastGoodRefresh = Date.now();
+        this.markStale();
+      } catch (err) {
+        /* Do not throw away the chart over one failed refresh — but do not
+         * pretend it is live either. Frozen prices shown as current are worse
+         * than an error. */
+        this.refreshFailures += 1;
+        if (this.refreshFailures === 1 || this.refreshFailures % 10 === 0) {
+          console.warn('[pane ' + this.index + '] refresh failed ('
+            + this.refreshFailures + 'x):', err.message);
+        }
+        this.markStale();
+      }
+    }
+
+    /* Is the exchange for this source open right now? Used to decide whether
+     * an old last bar means something is broken or the market is simply shut. */
+    marketLikelyOpen() {
+      const offsetMin = this.source.tzOffsetMin;
+      if (!offsetMin) return true;                 // unknown venue: assume open
+      const local = new Date(Date.now() + offsetMin * 60000);
+      const day = local.getUTCDay();
+      if (day === 0 || day === 6) return false;
+      const mins = local.getUTCHours() * 60 + local.getUTCMinutes();
+      return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30;
+    }
+
+    markStale() {
+      if (!this.tStale) return;
+      let stale = false;
+      let why = '';
+
+      if (this.refreshFailures >= 2) {
+        stale = true;
+        why = this.refreshFailures + ' refreshes failed — showing the last data that loaded';
+      } else if (this.candles.length && this.marketLikelyOpen() && !this.isLongTf) {
+        const age = Date.now() / 1000 - this.candles[this.candles.length - 1].time;
+        const allowed = this.tfSeconds * 2 + 120;
+        if (age > allowed) {
+          stale = true;
+          why = 'newest bar is ' + Math.round(age / 60) + ' minutes old';
+        }
+      }
+      this.tStale.hidden = !stale;
+      this.tStale.title = why;
+      this.ticker.classList.toggle('stale', stale);
     }
 
     onCandle(c) {
@@ -923,6 +975,7 @@
       this.tChg.dataset.dir = diff > 0 ? 'up' : diff < 0 ? 'down' : '';
 
       Alerts.check(this.config.source, this.config.symbol, price, this.symbolLabel);
+      this.markStale();
 
       if (silent || prev == null || price === prev) return;
 
